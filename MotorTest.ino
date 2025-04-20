@@ -131,8 +131,8 @@ void loop() {
       Serial.read();
     }
     
-    // If input is 7, we're setting motor speed
-    if (input == 7) {
+    // If input is 9, we're setting motor speed
+    if (input == 9) {
       Serial.println("Enter motor speed (0-255):");
       while (Serial.available() == 0) {
         // Wait for input
@@ -147,8 +147,8 @@ void loop() {
         motorSpeed = DEFAULT_SPEED;
       }
     }
-    // If input is 8, we're setting action duration
-    else if (input == 8) {
+    // If input is 10, we're setting action duration
+    else if (input == 10) {
       Serial.println("Enter action duration in milliseconds:");
       while (Serial.available() == 0) {
         // Wait for input
