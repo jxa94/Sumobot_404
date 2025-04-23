@@ -1,218 +1,363 @@
 #include <Arduino.h>
+#include <SPI.h>
 
-// Motor pins: Digital output
+// === STRATEGY CONTROL ===
+#define STRATEGY_DEFAULT 0
+#define STRATEGY_RUNAWAY 1
+#define STRATEGY_SELECT_PIN A5  // Pin to select strategy
+
+// Motor pins
 #define M1L 11
 #define M1R 10
 #define M2L 5
 #define M2R 6
 
-// Starter switch: Digital input
+// Input pins
 #define JSUMO_SWITCH 4
-
-// Line sensors: Digital input
-#define LINE_SENSOR_FL 2  // Front-left
-#define LINE_SENSOR_FR 3  // Front-right
-#define LINE_SENSOR_BL 12 // Back-left
-#define LINE_SENSOR_BR 13 // Back-right
-
-// Bump sensors
+#define LINE_SENSOR_FL 2
+#define LINE_SENSOR_FR 3
+#define LINE_SENSOR_BL 12
+#define LINE_SENSOR_BR 13
 #define BUMP_LEFT 7
 #define BUMP_RIGHT 8
-
-// IR reflectance sensors: Analog input
-#define IR_REFLECT_LEFT A0
-#define IR_REFLECT_CENTER A1
-#define IR_REFLECT_RIGHT A2
-
-// Ultrasonic sensor: Analog input
 #define ULTRASONIC_TRIG A3
 #define ULTRASONIC_ECHO A4
 
-// Constants
-const int ONstate = 1;
-const int FRONT_BIT = 0;
-const int LEFT_BIT = 1;
-const int RIGHT_BIT = 2;
-const int LINE_FL_BIT = 3;
-const int LINE_FR_BIT = 4;
-const int LINE_BL_BIT = 5;
-const int LINE_BR_BIT = 6;
-//I AM TESTING THE EDDIT
+// === State Definitions ===
+#define STATE_IDLE     0
+#define STATE_SEEK     1
+#define STATE_ATTACK   2
+#define STATE_RETREAT  3
+#define STATE_LINE_RECOVERY 4
+
 // Global variables
-unsigned long exploreStartTime = 0;
-unsigned long exploreDuration = 0;
-unsigned long actionStartTime = 0;
-unsigned long actionDuration = 200;
-bool cond = false;
-int sensorStates = 0;
-int wheelSpeed = 200;
-unsigned long waitStartTime = 0;
-bool waitOnce = false;
+uint8_t currentState = STATE_IDLE;
+uint8_t currentStrategy = STRATEGY_DEFAULT;
 
-// Movement Functions
-void moveForward(int leftSpeed, int rightSpeed) {
-  analogWrite(M1L, leftSpeed);
-  analogWrite(M2R, rightSpeed);
+// Sensor flags
+bool frontDetected = false;
+bool leftDetected = false;
+bool rightDetected = false;
+bool lineFL = false;
+bool lineFR = false;
+bool lineBL = false;
+bool lineBR = false;
+
+// Timing variables
+unsigned long lastStateTime = 0;
+unsigned long startWaitTime = 0;
+bool waitingForStart = false;
+
+// Movement functions
+void moveForward(uint8_t leftSpeed, uint8_t rightSpeed) {
+  digitalWrite(M1L, HIGH);
   digitalWrite(M1R, LOW);
   digitalWrite(M2L, LOW);
+  digitalWrite(M2R, HIGH);
+  
+  analogWrite(M1L, leftSpeed);
+  analogWrite(M2R, rightSpeed);
 }
 
-void moveBackward(int leftSpeed, int rightSpeed) {
+void moveBackward(uint8_t leftSpeed, uint8_t rightSpeed) {
+  digitalWrite(M1L, LOW);
+  digitalWrite(M1R, HIGH);
+  digitalWrite(M2L, HIGH);
+  digitalWrite(M2R, LOW);
+  
   analogWrite(M1R, leftSpeed);
   analogWrite(M2L, rightSpeed);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2R, LOW);
 }
 
-void turnLeft(int leftSpeed, int rightSpeed) {
+void turnLeft(uint8_t leftSpeed, uint8_t rightSpeed) {
+  digitalWrite(M1L, LOW);
+  digitalWrite(M1R, HIGH);
+  digitalWrite(M2L, LOW);
+  digitalWrite(M2R, HIGH);
+  
   analogWrite(M1R, leftSpeed);
   analogWrite(M2R, rightSpeed);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2L, LOW);
 }
 
-void turnRight(int leftSpeed, int rightSpeed) {
+void turnRight(uint8_t leftSpeed, uint8_t rightSpeed) {
+  digitalWrite(M1L, HIGH);
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2L, HIGH);
+  digitalWrite(M2R, LOW);
+  
   analogWrite(M1L, leftSpeed);
   analogWrite(M2L, rightSpeed);
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2R, LOW);
 }
 
 void stopMovement() {
+  digitalWrite(M1L, LOW);
   digitalWrite(M1R, LOW);
   digitalWrite(M2L, LOW);
-  digitalWrite(M1L, LOW);
   digitalWrite(M2R, LOW);
 }
 
-// Snake Movement
-void snakeMovement() {
-  static bool direction = true;
-  static unsigned long lastChangeTime = millis();
-  unsigned long currentTime = millis();
-
-  if (currentTime - lastChangeTime >= 500) {
-    direction = !direction;
-    lastChangeTime = currentTime;
-  }
-
-  if (direction) {
-    moveForward(255, 150);
-  } else {
-    moveForward(150, 255);
-  }
-
-  actionStartTime = millis();
-  while (millis() - actionStartTime < 950) {
-    if (!digitalRead(LINE_SENSOR_FR) || !digitalRead(LINE_SENSOR_FL) ||
-        !digitalRead(LINE_SENSOR_BR) || !digitalRead(LINE_SENSOR_BL)) {
-      break;
-    }
-  }
-}
-
-// Sensor State Update
+// Simplified sensor state update 
 void updateSensorStates() {
-  sensorStates = (digitalRead(BUMP_RIGHT) << RIGHT_BIT) |
-                 (digitalRead(BUMP_LEFT) << LEFT_BIT) |
-                 (digitalRead(ULTRASONIC_ECHO) << FRONT_BIT) |
-                 (!digitalRead(LINE_SENSOR_FL) << LINE_FL_BIT) |
-                 (!digitalRead(LINE_SENSOR_FR) << LINE_FR_BIT) |
-                 (!digitalRead(LINE_SENSOR_BL) << LINE_BL_BIT) |
-                 (!digitalRead(LINE_SENSOR_BR) << LINE_BR_BIT);
+  // Read bump and ultrasonic sensors
+  rightDetected = digitalRead(BUMP_RIGHT);
+  leftDetected = digitalRead(BUMP_LEFT);
+  frontDetected = digitalRead(ULTRASONIC_ECHO);
+  
+  // Line sensors (inverted logic - LOW when line detected)
+  lineFL = !digitalRead(LINE_SENSOR_FL);
+  lineFR = !digitalRead(LINE_SENSOR_FR);
+  lineBL = !digitalRead(LINE_SENSOR_BL);
+  lineBR = !digitalRead(LINE_SENSOR_BR);
 }
 
-// Setup
-void setup() {
-  Serial.begin(9600);
+// Checks if any line sensor is active
+bool lineDetected() {
+  return lineFL || lineFR || lineBL || lineBR;
+}
 
-  // Motor pins
-  pinMode(M2R, OUTPUT);
-  pinMode(M2L, OUTPUT);
+// Ultrasonic trigger function
+void triggerUltrasonic() {
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRASONIC_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+}
+
+void setup() {
+  // Set pin modes using standard Arduino functions
   pinMode(M1L, OUTPUT);
   pinMode(M1R, OUTPUT);
-
-  // Line sensors
+  pinMode(M2L, OUTPUT);
+  pinMode(M2R, OUTPUT);
+  
+  pinMode(ULTRASONIC_TRIG, OUTPUT);
+  pinMode(ULTRASONIC_ECHO, INPUT);
+  
   pinMode(LINE_SENSOR_FL, INPUT_PULLUP);
   pinMode(LINE_SENSOR_FR, INPUT_PULLUP);
   pinMode(LINE_SENSOR_BL, INPUT_PULLUP);
   pinMode(LINE_SENSOR_BR, INPUT_PULLUP);
-
-  // IR sensors
-  pinMode(IR_REFLECT_LEFT, INPUT);
-  pinMode(IR_REFLECT_CENTER, INPUT);
-  pinMode(IR_REFLECT_RIGHT, INPUT);
-
-  // Ultrasonic sensor
-  pinMode(ULTRASONIC_TRIG, OUTPUT);
-  pinMode(ULTRASONIC_ECHO, INPUT);
-
-  // Bump sensors
+  
   pinMode(BUMP_LEFT, INPUT);
   pinMode(BUMP_RIGHT, INPUT);
-
-  // Starter switch
+  
   pinMode(JSUMO_SWITCH, INPUT);
+  pinMode(STRATEGY_SELECT_PIN, INPUT_PULLUP);
+  
+  // Set PWM frequencies for motor control (closest equivalent to the direct register setup)
+  // This uses standard Arduino functions instead of direct register manipulation
+  
+  // Initialize
   updateSensorStates();
+  lastStateTime = micros();
 }
 
-// Main loop
-void loop() {
-  int JSUMOdata = digitalRead(JSUMO_SWITCH);
-  updateSensorStates();
-
-  if (JSUMOdata) {
-    if (!waitOnce) {
-      waitStartTime = millis();
-      waitOnce = true;
-    }
-
-    if (millis() - waitStartTime >= 3000) {
-      switch (sensorStates) {
-        case 0:
-          snakeMovement();
-          break;
-
-        case 1:  // Front obstacle
-          moveForward(255, 255);
-          break;
-
-        case 2:  // Left obstacle
-          turnLeft(255, 255);
-          delay(1050);
-          break;
-
-        case 3:  // Front + Left
-          moveForward(155, 255);
-          break;
-
-        case 4:  // Right obstacle
-          turnRight(255, 255);
-          delay(1050);
-          break;
-
-        case 5:  // Front + Right
-          moveForward(255, 155);
-          break;
-
-        case 8:  // Front-left line sensor
-        case 16: // Front-right line sensor
-        case 32: // Back-left line sensor
-        case 64: // Back-right line sensor
-        case 24: // Both front line sensors
-        case 48: // Both back line sensors
-        case 80: // Front-left + Back-left
-        case 96: // Front-right + Back-right
-          moveBackward(255, 255);
-          delay(500);
-          turnRight(255, 255);
-          delay(390);
-          break;
-
-        default:
-          stopMovement();
-          break;
+// Execute Default Strategy (aggressive)
+void executeDefaultStrategy() {
+  switch (currentState) {
+    case STATE_IDLE:
+      stopMovement();
+      // Check start switch
+      if (digitalRead(JSUMO_SWITCH)) {
+        if (!waitingForStart) {
+          startWaitTime = micros();
+          waitingForStart = true;
+        }
+        
+        // 3 second wait
+        if (micros() - startWaitTime >= 3000000UL) {
+          currentState = STATE_SEEK;
+          lastStateTime = micros();
+        }
+      } else {
+        waitingForStart = false;
       }
-    }
+      break;
+      
+    case STATE_SEEK:
+      // Find opponent - spin
+      turnRight(150, 150);
+      
+      // Check for opponent or line
+      if (frontDetected || leftDetected || rightDetected) {
+        currentState = STATE_ATTACK;
+        lastStateTime = micros();
+      }
+      
+      if (lineDetected()) {
+        currentState = STATE_LINE_RECOVERY;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_ATTACK:
+      // Execute attack based on sensor inputs
+      if (frontDetected) {
+        moveForward(255, 255);  // Full attack
+      } 
+      else if (leftDetected) {
+        moveForward(150, 255);  // Turn left
+      }
+      else if (rightDetected) {
+        moveForward(255, 150);  // Turn right
+      }
+      else {
+        currentState = STATE_SEEK;
+        lastStateTime = micros();
+      }
+      
+      // Check for line
+      if (lineDetected()) {
+        currentState = STATE_LINE_RECOVERY;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_LINE_RECOVERY:
+      // Handle line detection
+      if (lineFL || lineFR) {
+        moveBackward(255, 255);
+        
+        if (micros() - lastStateTime >= 300000UL) {
+          currentState = STATE_RETREAT;
+          lastStateTime = micros();
+        }
+      }
+      else if (lineBL || lineBR) {
+        moveForward(255, 255);
+        
+        if (micros() - lastStateTime >= 300000UL) {
+          currentState = STATE_RETREAT;
+          lastStateTime = micros();
+        }
+      }
+      else {
+        currentState = STATE_SEEK;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_RETREAT:
+      // Turn away from line
+      turnRight(255, 255);
+      
+      if (micros() - lastStateTime >= 400000UL) {
+        currentState = STATE_SEEK;
+        lastStateTime = micros();
+      }
+      break;
+  }
+}
+
+// Execute Runaway Strategy (evasive)
+void executeRunawayStrategy() {
+  switch (currentState) {
+    case STATE_IDLE:
+      // Same idle behavior as default
+      stopMovement();
+      if (digitalRead(JSUMO_SWITCH)) {
+        if (!waitingForStart) {
+          startWaitTime = micros();
+          waitingForStart = true;
+        }
+        
+        if (micros() - startWaitTime >= 3000000UL) {
+          currentState = STATE_SEEK;
+          lastStateTime = micros();
+        }
+      } else {
+        waitingForStart = false;
+      }
+      break;
+      
+    case STATE_SEEK:
+      // In runaway, move in evasive patterns
+      moveForward(150, 100);  // Curved path
+      
+      if (frontDetected || leftDetected || rightDetected) {
+        currentState = STATE_RETREAT;
+        lastStateTime = micros();
+      }
+      
+      if (lineDetected()) {
+        currentState = STATE_LINE_RECOVERY;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_RETREAT:
+      // Run away from opponent
+      if (frontDetected) {
+        moveBackward(255, 255);
+      } 
+      else if (leftDetected) {
+        turnRight(255, 255);
+      }
+      else if (rightDetected) {
+        turnLeft(255, 255);
+      }
+      else {
+        if (micros() - lastStateTime >= 500000UL) {
+          currentState = STATE_SEEK;
+          lastStateTime = micros();
+        }
+      }
+      
+      if (lineDetected()) {
+        currentState = STATE_LINE_RECOVERY;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_LINE_RECOVERY:
+      // Same line recovery as default
+      if (lineFL || lineFR) {
+        moveBackward(255, 255);
+        
+        if (micros() - lastStateTime >= 300000UL) {
+          currentState = STATE_ATTACK;
+          lastStateTime = micros();
+        }
+      }
+      else if (lineBL || lineBR) {
+        moveForward(255, 255);
+        
+        if (micros() - lastStateTime >= 300000UL) {
+          currentState = STATE_ATTACK;
+          lastStateTime = micros();
+        }
+      }
+      else {
+        currentState = STATE_SEEK;
+        lastStateTime = micros();
+      }
+      break;
+      
+    case STATE_ATTACK:
+      // In runaway mode, use ATTACK state for turning
+      turnRight(200, 200);
+      
+      if (micros() - lastStateTime >= 500000UL) {
+        currentState = STATE_SEEK;
+        lastStateTime = micros();
+      }
+      break;
+  }
+}
+
+void loop() {
+  // Update sensor readings
+  updateSensorStates();
+  triggerUltrasonic();
+  
+  // Check strategy selection
+  currentStrategy = digitalRead(STRATEGY_SELECT_PIN) ? STRATEGY_RUNAWAY : STRATEGY_DEFAULT;
+  
+  // Execute selected strategy
+  if (currentStrategy == STRATEGY_DEFAULT) {
+    executeDefaultStrategy();
+  } else {
+    executeRunawayStrategy();
   }
 }
