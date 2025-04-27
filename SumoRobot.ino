@@ -1,355 +1,326 @@
-// Sumo robot for JSUMO competition
 #include <Arduino.h>
 
-// === Pin/channel assignments ===
-// ADC channels for IR sensors
-#define IR_LEFT_CH    A0   // A0
-#define IR_MID_CH     A1   // A1
-#define IR_RIGHT_CH   A2   // A2
-// Digital pins (direct port)
-// Back ultrasonic
-#define ULTRA_TRIG_PIN A3 // PC3
-#define ULTRA_ECHO_PIN A4 // PC4
-// Strategy & start switch
-#define STRATEGY_SELECT_PIN A5 // PC5
-#define JSUMO_SWITCH_PIN    4  // PD4
-// Line sensors (white=HIGH, black=LOW)
-#define LINE_FL_PIN 2  // PD2
-#define LINE_FR_PIN 3  // PD3
-#define LINE_BL_PIN 12 // PB4
-#define LINE_BR_PIN 13 // PB5
+// Motor pins: Digital output
+#define M1L 11
+#define M1R 10
+#define M2L 5
+#define M2R 6
+
+// Starter switch: Digital input
+#define JSUMO_SWITCH 4
+
+// Line sensors: Digital input
+#define LINE_SENSOR_FL 2  // Front-left
+#define LINE_SENSOR_FR 3  // Front-right
+#define LINE_SENSOR_BL 12 // Back-left
+#define LINE_SENSOR_BR 13 // Back-right
+
 // Bump sensors
-#define BUMP_LEFT_PIN  7  // PD7
-#define BUMP_RIGHT_PIN 8  // PB0
-// Motor pins
-#define M1L_PIN 11 // PB3 (PWM & Dir)
-#define M1R_PIN 10 // PB2 (Dir only)
-#define M2L_PIN 5  // PD5 (Dir only)
-#define M2R_PIN 6  // PD6 (PWM & Dir)
+#define BUMP_LEFT 7
+#define BUMP_RIGHT 8
 
-// === Thresholds ===
-#define IR_DETECT_THRESHOLD    400  // ADC < 400 → object within ~30 cm
-#define ULTRA_DETECT_THRESHOLD 20   // cm, back-ultrasonic
+// IR reflectance sensors: Analog input
+#define IR_REFLECT_LEFT A0
+#define IR_REFLECT_CENTER A1
+#define IR_REFLECT_RIGHT A2
 
-// === State machine ===
-#define STATE_IDLE            0
-#define STATE_SEEK            1
-#define STATE_ATTACK          2
-#define STATE_RETREAT         3
-#define STATE_LINE_RECOVERY   4
+// Ultrasonic sensor: Analog input
+#define ULTRASONIC_TRIG A3
+#define ULTRASONIC_ECHO A4
 
-// === Strategy selector ===
-#define STRAT_DEFAULT   0
-#define STRAT_RUNAWAY   1
+// Constants
+const int ONstate = 1;
+const int LINE_FL_BIT = 0;
+const int LINE_FR_BIT = 1;
+const int LINE_BL_BIT = 2;
+const int LINE_BR_BIT = 3;
+const int BUMP_LEFT_BIT = 4;
+const int BUMP_RIGHT_BIT = 5;
 
-// === Motor direction macros ===
-#define SET(reg, bit)    ((reg) |=  _BV(bit))
-#define CLR(reg, bit)    ((reg) &= ~_BV(bit))
-// M1L_PIN = PB3, M1R_PIN = PB2
-#define M1L_HIGH() SET(PORTB, PORTB3)
-#define M1L_LOW()  CLR(PORTB, PORTB3)
-#define M1R_HIGH() SET(PORTB, PORTB2)
-#define M1R_LOW()  CLR(PORTB, PORTB2)
-// M2L_PIN = PD5, M2R_PIN = PD6
-#define M2L_HIGH() SET(PORTD, PORTD5)
-#define M2L_LOW()  CLR(PORTD, PORTD5)
-#define M2R_HIGH() SET(PORTD, PORTD6)
-#define M2R_LOW()  CLR(PORTD, PORTD6)
+// IR sensor thresholds and constants
+const int IR_MAX_DISTANCE = 150; // cm - maximum reliable distance
+const int IR_MIN_DISTANCE = 20;  // cm - minimum reliable distance
+const int IR_DETECTION_THRESHOLD = 80; // cm - consider opponent detected below this value
 
-// === Fast ADC read macro ===
-#define fastADCRead(ch) ({          \
-  ADMUX = _BV(REFS0) | ((ch) & 0x07); \
-  ADCSRA |= _BV(ADSC);               \
-  while (ADCSRA & _BV(ADSC));        \
-  ADC;                                \
-})
+// Field boundary
+const int FIELD_BOUNDARY = 1; // Line sensor reads HIGH for white boundary
 
-// === Globals ===
-uint8_t currentState    = STATE_IDLE;
-uint8_t currentStrategy = STRAT_DEFAULT;
-unsigned long lastStateTime = 0, startWaitTime = 0;
-bool waitingForStart = false;
+// Global variables
+unsigned long startTime = 0;
+bool isStartDelayCompleted = false;
+unsigned long lastScanTime = 0;
+int scanDirection = 1; // 1 for clockwise, -1 for counter-clockwise
+int lineSensorState = 0;
+int bumpSensorState = 0;
+int attackMode = 0; // 0: searching, 1: attacking front, 2: attacking from side, 3: evading boundary
 
-// Sensor flags
-bool frontDetected = false, leftDetected = false, rightDetected = false;
-bool lineFL = false, lineFR = false, lineBL = false, lineBR = false;
-
-// Raw distances
-uint16_t irLeftDist, irMidDist, irRightDist, ultraDist;
-
-// === Function prototypes ===
+// Function declarations
+void moveForward(int leftSpeed, int rightSpeed);
+void moveBackward(int leftSpeed, int rightSpeed);
+void turnLeft(int leftSpeed, int rightSpeed);
+void turnRight(int leftSpeed, int rightSpeed);
 void stopMovement();
-void moveForward(uint8_t L, uint8_t R);
-void moveBackward(uint8_t L, uint8_t R);
-void turnLeft(uint8_t L, uint8_t R);
-void turnRight(uint8_t L, uint8_t R);
-void measureUltrasonic();
+int getIRDistance(int sensorPin);
+long getUltrasonicDistance();
 void updateSensorStates();
-bool lineDetected();
-void executeDefaultStrategy();
-void executeRunawayStrategy();
+void searchOpponent();
+void attackOpponent();
+void evadeBoundary();
+void scanArea();
 
 void setup() {
-  // — ADC setup —
-  ADCSRA = _BV(ADEN) | _BV(ADPS2)|_BV(ADPS1)|_BV(ADPS0);  // enable, prescaler=128
-  DIDR0 = _BV(ADC0D)|_BV(ADC1D)|_BV(ADC2D);               // disable digital on A0–A2
+  Serial.begin(9600);
 
-  // — Motor pins as outputs —
-  DDRB |= _BV(DDB3)|_BV(DDB2); // M1L, M1R
-  DDRD |= _BV(DDD5)|_BV(DDD6); // M2L, M2R
+  // Motor pins
+  pinMode(M2R, OUTPUT);
+  pinMode(M2L, OUTPUT);
+  pinMode(M1L, OUTPUT);
+  pinMode(M1R, OUTPUT);
 
-  // — Sensor pins as inputs, no pull-ups —
-  DDRD &= ~(_BV(DDD2)|_BV(DDD3)|_BV(DDD4)|_BV(DDD7));
-  DDRB &= ~(_BV(DDB4)|_BV(DDB5)|_BV(DDB0));
-  DDRC &= ~(_BV(DDC3)|_BV(DDC4)|_BV(DDC5));
-  PORTD &= ~(_BV(PORTD2)|_BV(PORTD3)|_BV(PORTD4)|_BV(PORTD7));
-  PORTB &= ~(_BV(PORTB4)|_BV(PORTB5)|_BV(PORTB0));
-  PORTC &= ~(_BV(PORTC3)|_BV(PORTC4)|_BV(PORTC5));
+  // Line sensors
+  pinMode(LINE_SENSOR_FL, INPUT_PULLUP);
+  pinMode(LINE_SENSOR_FR, INPUT_PULLUP);
+  pinMode(LINE_SENSOR_BL, INPUT_PULLUP);
+  pinMode(LINE_SENSOR_BR, INPUT_PULLUP);
 
-  // — Initial motor stop —
-  stopMovement();
+  // IR sensors
+  pinMode(IR_REFLECT_LEFT, INPUT);
+  pinMode(IR_REFLECT_CENTER, INPUT);
+  pinMode(IR_REFLECT_RIGHT, INPUT);
 
-  // — Initialize timing —
-  lastStateTime = micros();
+  // Ultrasonic sensor
+  pinMode(ULTRASONIC_TRIG, OUTPUT);
+  pinMode(ULTRASONIC_ECHO, INPUT);
+
+  // Bump sensors
+  pinMode(BUMP_LEFT, INPUT);
+  pinMode(BUMP_RIGHT, INPUT);
+
+  // Starter switch
+  pinMode(JSUMO_SWITCH, INPUT);
 }
 
 void loop() {
-  // 1) Read sensors
-  updateSensorStates();
-
-  // 2) Strategy select
-  currentStrategy = ( (PINC & _BV(PORTC5)) == 0 ) ? STRAT_DEFAULT : STRAT_RUNAWAY;
-  // (A5 pulled low → default; high → runaway)
-
-  // 3) Execute
-  if (currentStrategy == STRAT_DEFAULT) {
-    executeDefaultStrategy();
+  // Check if start switch is activated
+  if (digitalRead(JSUMO_SWITCH)) {
+    // Handle 5-second delay at the start
+    if (!isStartDelayCompleted) {
+      if (startTime == 0) {
+        startTime = millis();
+      }
+      
+      if (millis() - startTime >= 5000) { // 5-second delay
+        isStartDelayCompleted = true;
+      } else {
+        stopMovement(); // Stay still during delay
+        return;
+      }
+    }
+    
+    // Update sensor readings
+    updateSensorStates();
+    
+    // Priority 1: Evade boundary if detected
+    if (lineSensorState > 0) {
+      attackMode = 3;
+      evadeBoundary();
+      return;
+    }
+    
+    // Priority 2: Attack if opponent detected by bump sensors
+    if (bumpSensorState > 0) {
+      attackMode = 1;
+      attackOpponent();
+      return;
+    }
+    
+    // Read IR and ultrasonic sensors
+    int leftDist = getIRDistance(IR_REFLECT_LEFT);
+    int centerDist = getIRDistance(IR_REFLECT_CENTER);
+    int rightDist = getIRDistance(IR_REFLECT_RIGHT);
+    long backDist = getUltrasonicDistance();
+    
+    // Priority 3: Attack based on sensor readings
+    if (centerDist < IR_DETECTION_THRESHOLD) {
+      // Opponent is directly in front
+      attackMode = 1;
+      moveForward(255, 255); // Full speed ahead
+    } else if (leftDist < IR_DETECTION_THRESHOLD && leftDist < rightDist) {
+      // Opponent is more to the left
+      attackMode = 2;
+      moveForward(150, 255); // Turn left while moving forward
+    } else if (rightDist < IR_DETECTION_THRESHOLD && rightDist < leftDist) {
+      // Opponent is more to the right
+      attackMode = 2;
+      moveForward(255, 150); // Turn right while moving forward
+    } else if (backDist < 30 && backDist > 0) {
+      // Opponent is behind (within 30cm)
+      attackMode = 2;
+      // Quick 180-degree turn to face opponent
+      turnRight(255, 255);
+      delay(500); // Adjust based on your robot's turning speed
+    } else {
+      // No opponent detected, search mode
+      attackMode = 0;
+      searchOpponent();
+    }
   } else {
-    executeRunawayStrategy();
+    // Robot is off
+    stopMovement();
+    isStartDelayCompleted = false;
+    startTime = 0;
   }
 }
 
-// ——— SENSOR & STATE HELPERS ———
-
-void measureUltrasonic() {
-  // TRIG low→high pulse
-  CLR(PORTC, PORTC3);
-  delayMicroseconds(2);
-  SET(PORTC, PORTC3);
-  delayMicroseconds(10);
-  CLR(PORTC, PORTC3);
-
-  unsigned long t0 = micros();
-  // wait for echo high
-  while ((PINC & _BV(PORTC4)) == 0 && micros() - t0 < 1000UL);
-  unsigned long t1 = micros();
-  // wait for echo low
-  while ((PINC & _BV(PORTC4)) && micros() - t1 < 30000UL);
-  ultraDist = (micros() - t1) / 58; // cm
+// Movement Functions
+void moveForward(int leftSpeed, int rightSpeed) {
+  analogWrite(M1L, leftSpeed);
+  analogWrite(M2R, rightSpeed);
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2L, LOW);
 }
 
-void updateSensorStates() {
-  // IR distances
-  irLeftDist  = fastADCRead(IR_LEFT_CH);
-  irMidDist   = fastADCRead(IR_MID_CH);
-  irRightDist = fastADCRead(IR_RIGHT_CH);
-
-  // Ultrasonic
-  measureUltrasonic();
-
-  // Opponent detection
-  frontDetected = (irMidDist  < IR_DETECT_THRESHOLD);
-  leftDetected  = (irLeftDist < IR_DETECT_THRESHOLD);
-  rightDetected = (irRightDist< IR_DETECT_THRESHOLD);
-
-  // Bump switches (or back-ultra could also set a rear flag)
-  leftDetected  |= (PIND & _BV(PIND7));
-  rightDetected |= (PINB & _BV(PINB0));
-
-  // Line sensors (white=HIGH, we want detect white edge → recover)
-  lineFL = (PIND & _BV(PIND2));
-  lineFR = (PIND & _BV(PIND3));
-  lineBL = (PINB & _BV(PINB4));
-  lineBR = (PINB & _BV(PINB5));
+void moveBackward(int leftSpeed, int rightSpeed) {
+  analogWrite(M1R, leftSpeed);
+  analogWrite(M2L, rightSpeed);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2R, LOW);
 }
 
-bool lineDetected() {
-  return lineFL || lineFR || lineBL || lineBR;
+void turnLeft(int leftSpeed, int rightSpeed) {
+  analogWrite(M1R, leftSpeed);
+  analogWrite(M2R, rightSpeed);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2L, LOW);
 }
 
-// ——— MOTOR PRIMITIVES ———
+void turnRight(int leftSpeed, int rightSpeed) {
+  analogWrite(M1L, leftSpeed);
+  analogWrite(M2L, rightSpeed);
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2R, LOW);
+}
 
 void stopMovement() {
-  // Stop PWM
-  analogWrite(M1L_PIN, 0);
-  analogWrite(M2R_PIN, 0);
-  // All direction lines low (brake mode)
-  M1L_LOW(); M1R_LOW();
-  M2L_LOW(); M2R_LOW();
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2L, LOW);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2R, LOW);
 }
 
-void moveForward(uint8_t L, uint8_t R) {
-  // M1: forward = M1L high, M1R low, PWM on M1L
-  M1L_HIGH(); M1R_LOW();
-  analogWrite(M1L_PIN, L);
-  // M2: forward = M2L low, M2R high, PWM on M2R
-  M2L_LOW(); M2R_HIGH();
-  analogWrite(M2R_PIN, R);
+// IR Distance conversion (adjust based on your specific sensor model)
+int getIRDistance(int sensorPin) {
+  int reading = analogRead(sensorPin);
+  // Convert analog reading to distance in centimeters
+  // The formula below is a rough approximation for the GP2Y0A02YK0F sensor
+  // You may need to calibrate this for your actual sensor
+  if (reading < 40) return IR_MAX_DISTANCE; // Too far or not reliable
+  
+  float distance = 9462.0 / (reading - 16.92);
+  
+  if (distance > IR_MAX_DISTANCE) return IR_MAX_DISTANCE;
+  if (distance < IR_MIN_DISTANCE) return IR_MIN_DISTANCE;
+  
+  return (int)distance;
 }
 
-void moveBackward(uint8_t L, uint8_t R) {
-  // reverse directions
-  M1L_LOW(); M1R_HIGH();
-  analogWrite(M1L_PIN, L);
-  M2L_HIGH(); M2R_LOW();
-  analogWrite(M2R_PIN, R);
+// Ultrasonic Distance measurement
+long getUltrasonicDistance() {
+  // Clear the trigger pin
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+  delayMicroseconds(2);
+  
+  // Set the trigger pin high for 10 microseconds
+  digitalWrite(ULTRASONIC_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG, LOW);
+  
+  // Read the echo pin, return the sound wave travel time in microseconds
+  long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 30000); // Timeout after 30ms
+  
+  // Calculate distance in centimeters
+  long distance = duration * 0.034 / 2;
+  
+  return distance;
 }
 
-void turnLeft(uint8_t L, uint8_t R) {
-  // left wheel backward, right wheel forward
-  M1L_LOW(); M1R_HIGH();
-  analogWrite(M1L_PIN, L);
-  M2L_LOW(); M2R_HIGH();
-  analogWrite(M2R_PIN, R);
+// Update sensor states
+void updateSensorStates() {
+  // Line sensors (HIGH on white boundary)
+  lineSensorState = (digitalRead(LINE_SENSOR_FL) << LINE_FL_BIT) |
+                    (digitalRead(LINE_SENSOR_FR) << LINE_FR_BIT) |
+                    (digitalRead(LINE_SENSOR_BL) << LINE_BL_BIT) |
+                    (digitalRead(LINE_SENSOR_BR) << LINE_BR_BIT);
+  
+  // Bump sensors
+  bumpSensorState = (digitalRead(BUMP_LEFT) << BUMP_LEFT_BIT) |
+                    (digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
 }
 
-void turnRight(uint8_t L, uint8_t R) {
-  // left wheel forward, right wheel backward
-  M1L_HIGH(); M1R_LOW();
-  analogWrite(M1L_PIN, L);
-  M2L_HIGH(); M2R_LOW();
-  analogWrite(M2R_PIN, R);
-}
-
-// ——— STRATEGY EXECUTION ———
-
-void executeDefaultStrategy() {
-  switch (currentState) {
-    case STATE_IDLE:
-      stopMovement();
-      // Start button held?
-      if (PIND & _BV(PIND4)) {
-        if (!waitingForStart) {
-          startWaitTime = micros();
-          waitingForStart = true;
-        }
-        if (micros() - startWaitTime >= 3000000UL) {
-          currentState = STATE_SEEK;
-          lastStateTime = micros();
-        }
-      } else {
-        waitingForStart = false;
-      }
-      break;
-
-    case STATE_SEEK:
-      turnRight(150,150);
-      if (frontDetected||leftDetected||rightDetected) {
-        currentState = STATE_ATTACK; lastStateTime = micros();
-      }
-      if (lineDetected()) {
-        currentState = STATE_LINE_RECOVERY; lastStateTime = micros();
-      }
-      break;
-
-    case STATE_ATTACK:
-      if (frontDetected) moveForward(255,255);
-      else if (leftDetected) moveForward(150,255);
-      else if (rightDetected) moveForward(255,150);
-      else { currentState = STATE_SEEK; lastStateTime = micros(); }
-      if (lineDetected()) { currentState = STATE_LINE_RECOVERY; lastStateTime = micros(); }
-      break;
-
-    case STATE_LINE_RECOVERY:
-      // if front edge, back off
-      if (lineFL||lineFR) {
-        moveBackward(200,200);
-        if (micros() - lastStateTime >= 300000UL) {
-          currentState = STATE_RETREAT; lastStateTime = micros();
-        }
-      }
-      // if back edge, drive forward
-      else if (lineBL||lineBR) {
-        moveForward(200,200);
-        if (micros() - lastStateTime >= 300000UL) {
-          currentState = STATE_RETREAT; lastStateTime = micros();
-        }
-      }
-      else {
-        currentState = STATE_SEEK; lastStateTime = micros();
-      }
-      break;
-
-    case STATE_RETREAT:
-      turnRight(255,255);
-      if (micros() - lastStateTime >= 400000UL) {
-        currentState = STATE_SEEK; lastStateTime = micros();
-      }
-      break;
+// Search pattern to find opponent
+void searchOpponent() {
+  // Change scan direction every 3 seconds
+  if (millis() - lastScanTime > 3000) {
+    scanDirection = -scanDirection;
+    lastScanTime = millis();
+  }
+  
+  if (scanDirection == 1) {
+    // Clockwise spin with forward movement
+    turnRight(180, 180);
+  } else {
+    // Counter-clockwise spin with forward movement
+    turnLeft(180, 180);
   }
 }
 
-void executeRunawayStrategy() {
-  switch (currentState) {
-    case STATE_IDLE:
-      stopMovement();
-      if (PIND & _BV(PIND4)) {
-        if (!waitingForStart) {
-          startWaitTime = micros();
-          waitingForStart = true;
-        }
-        if (micros() - startWaitTime >= 3000000UL) {
-          currentState = STATE_SEEK; lastStateTime = micros();
-        }
-      } else waitingForStart = false;
-      break;
+// Attack opponent based on sensor readings
+void attackOpponent() {
+  // If both bump sensors are triggered, go full power
+  if ((bumpSensorState & ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) == 
+      ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) {
+    moveForward(255, 255);
+  }
+  // If left bump sensor is triggered, push harder on left side
+  else if (bumpSensorState & (1 << BUMP_LEFT_BIT)) {
+    moveForward(255, 200);
+  }
+  // If right bump sensor is triggered, push harder on right side
+  else if (bumpSensorState & (1 << BUMP_RIGHT_BIT)) {
+    moveForward(200, 255);
+  }
+}
 
-    case STATE_SEEK:
-      moveForward(150,100); // weave
-      if (frontDetected||leftDetected||rightDetected) {
-        currentState = STATE_RETREAT; lastStateTime = micros();
-      }
-      if (lineDetected()) {
-        currentState = STATE_LINE_RECOVERY; lastStateTime = micros();
-      }
-      break;
-
-    case STATE_RETREAT:
-      if (frontDetected) moveBackward(255,255);
-      else if (leftDetected) turnRight(255,255);
-      else if (rightDetected) turnLeft(255,255);
-      else if (micros() - lastStateTime >= 500000UL) {
-        currentState = STATE_SEEK; lastStateTime = micros();
-      }
-      if (lineDetected()) {
-        currentState = STATE_LINE_RECOVERY; lastStateTime = micros();
-      }
-      break;
-
-    case STATE_LINE_RECOVERY:
-      // same as default
-      if (lineFL||lineFR) {
-        moveBackward(200,200);
-        if (micros() - lastStateTime >= 300000UL) {
-          currentState = STATE_ATTACK; lastStateTime = micros();
-        }
-      }
-      else if (lineBL||lineBR) {
-        moveForward(200,200);
-        if (micros() - lastStateTime >= 300000UL) {
-          currentState = STATE_ATTACK; lastStateTime = micros();
-        }
-      }
-      else {
-        currentState = STATE_SEEK; lastStateTime = micros();
-      }
-      break;
-
-    case STATE_ATTACK:
-      turnRight(200,200);
-      if (micros() - lastStateTime >= 500000UL) {
-        currentState = STATE_SEEK; lastStateTime = micros();
-      }
-      break;
+// Handle boundary detection and evasion
+void evadeBoundary() {
+  // Determine which sensors detected the boundary and back away accordingly
+  
+  // Front sensors detected boundary
+  if ((lineSensorState & ((1 << LINE_FL_BIT) | (1 << LINE_FR_BIT))) > 0) {
+    // Back away from the boundary
+    moveBackward(255, 255);
+    delay(300);
+    
+    // Turn away from the boundary
+    if (lineSensorState & (1 << LINE_FL_BIT)) {
+      turnRight(255, 255);
+    } else {
+      turnLeft(255, 255);
+    }
+    delay(200);
+  }
+  // Back sensors detected boundary
+  else if ((lineSensorState & ((1 << LINE_BL_BIT) | (1 << LINE_BR_BIT))) > 0) {
+    // Move away from the boundary
+    moveForward(255, 255);
+    delay(300);
+    
+    // Turn away from the boundary
+    if (lineSensorState & (1 << LINE_BL_BIT)) {
+      turnRight(255, 255);
+    } else {
+      turnLeft(255, 255);
+    }
+    delay(200);
   }
 }
