@@ -1,75 +1,171 @@
-// MotorTest.ino
-// Safe motor test for your Sumo Bot
-
+// EnhancedMotorTest.ino
+// Comprehensive motor test for your Sumo Bot using same style as driver code
 #include <Arduino.h>
 
-// Motor pins (match your wiring)
-#define M1L_PIN 11  // PB3, PWM
-#define M1R_PIN 10  // PB2, direction
-#define M2L_PIN 5   // PD5, direction
-#define M2R_PIN 6   // PD6, PWM
+// Motor pins: Digital output (matching your original driver)
+#define M1L 11
+#define M1R 10
+#define M2L 5
+#define M2R 6
+
+// Test settings
+const int TEST_SPEEDS[] = {50, 100, 150, 200, 255};
+const int NUM_SPEEDS = 5;
+const int TEST_DURATION = 2000; // ms per speed level
+const int PAUSE_DURATION = 1000; // ms between tests
+
+// Function declarations (matching your driver style)
+void moveForward(int leftSpeed, int rightSpeed);
+void moveBackward(int leftSpeed, int rightSpeed);
+void turnLeft(int leftSpeed, int rightSpeed);
+void turnRight(int leftSpeed, int rightSpeed);
+void stopMovement();
+void testMotorSequence(const char* testName, void (*motorFunction)(int, int));
 
 void setup() {
   Serial.begin(9600);
-  // Configure pins
-  pinMode(M1L_PIN, OUTPUT);
-  pinMode(M1R_PIN, OUTPUT);
-  pinMode(M2L_PIN, OUTPUT);
-  pinMode(M2R_PIN, OUTPUT);
-
+  
+  // Motor pins
+  pinMode(M1L, OUTPUT);
+  pinMode(M1R, OUTPUT);
+  pinMode(M2L, OUTPUT);
+  pinMode(M2R, OUTPUT);
+  
   // Ensure motors are stopped
-  analogWrite(M1L_PIN, 0);
-  analogWrite(M2R_PIN, 0);
-  digitalWrite(M1R_PIN, LOW);
-  digitalWrite(M2L_PIN, LOW);
-
-  Serial.println("--- MotorTest Starting ---");
-  delay(1000);
+  stopMovement();
+  
+  Serial.println(F("===== Sumo Bot Motor Test ====="));
+  Serial.println(F("Testing individual motors and movement functions"));
+  delay(2000);
 }
 
 void loop() {
-  // Test Motor 1 (Left)
-  Serial.println("Motor 1 Forward");
-  digitalWrite(M1R_PIN, LOW);
-  for (int speed = 50; speed <= 150; speed += 50) {
-    analogWrite(M1L_PIN, speed);
-    Serial.print("Speed: "); Serial.println(speed);
-    delay(2000);
-  }
-  analogWrite(M1L_PIN, 0);
-  delay(500);
+  // Test individual motors first
+  testSingleMotor("LEFT MOTOR FORWARD", M1L, M1R, LOW);
+  testSingleMotor("LEFT MOTOR BACKWARD", M1L, M1R, HIGH);
+  
+  testSingleMotor("RIGHT MOTOR FORWARD", M2R, M2L, LOW);
+  testSingleMotor("RIGHT MOTOR BACKWARD", M2R, M2L, HIGH);
+  
+  // Test combined movement functions
+  testMotorSequence("BOTH MOTORS FORWARD", moveForward);
+  testMotorSequence("BOTH MOTORS BACKWARD", moveBackward);
+  testMotorSequence("TURN LEFT", turnLeft);
+  testMotorSequence("TURN RIGHT", turnRight);
+  
+  // Test special maneuvers
+  Serial.println(F("\n--- Testing special maneuvers ---"));
+  
+  // Quick direction reversal
+  Serial.println(F("DIRECTION REVERSAL TEST"));
+  moveForward(200, 200);
+  delay(2000);
+  moveBackward(200, 200);
+  delay(2000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  // Spin in place
+  Serial.println(F("SPIN TEST - CLOCKWISE"));
+  turnRight(200, 200);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  Serial.println(F("SPIN TEST - COUNTER-CLOCKWISE"));
+  turnLeft(200, 200);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  // Sharp turn
+  Serial.println(F("SHARP TURN TEST"));
+  moveForward(50, 200);
+  delay(3000);
+  moveForward(200, 50);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  Serial.println(F("\n===== Motor Test Complete ====="));
+  Serial.println(F("Restarting test sequence in 5 seconds..."));
+  delay(5000);
+}
 
-  Serial.println("Motor 1 Reverse");
-  digitalWrite(M1R_PIN, HIGH);
-  for (int speed = 50; speed <= 150; speed += 50) {
-    analogWrite(M1L_PIN, speed);
-    Serial.print("Speed: "); Serial.println(speed);
-    delay(2000);
+// Function to test a single motor at different speeds
+void testSingleMotor(const char* testName, int pwmPin, int dirPin, int dirValue) {
+  Serial.print(F("\n--- Testing "));
+  Serial.print(testName);
+  Serial.println(F(" ---"));
+  
+  digitalWrite(dirPin, dirValue);
+  
+  for (int i = 0; i < NUM_SPEEDS; i++) {
+    int speed = TEST_SPEEDS[i];
+    Serial.print(F("Speed: "));
+    Serial.println(speed);
+    
+    analogWrite(pwmPin, speed);
+    delay(TEST_DURATION);
   }
-  analogWrite(M1L_PIN, 0);
-  delay(1000);
+  
+  analogWrite(pwmPin, 0);
+  Serial.println(F("Test complete, motor stopped."));
+  delay(PAUSE_DURATION);
+}
 
-  // Test Motor 2 (Right)
-  Serial.println("Motor 2 Forward");
-  digitalWrite(M2L_PIN, LOW);
-  for (int speed = 50; speed <= 150; speed += 50) {
-    analogWrite(M2R_PIN, speed);
-    Serial.print("Speed: "); Serial.println(speed);
-    delay(2000);
+// Function to test movement functions at different speeds
+void testMotorSequence(const char* testName, void (*motorFunction)(int, int)) {
+  Serial.print(F("\n--- Testing "));
+  Serial.print(testName);
+  Serial.println(F(" ---"));
+  
+  for (int i = 0; i < NUM_SPEEDS; i++) {
+    int speed = TEST_SPEEDS[i];
+    Serial.print(F("Speed: "));
+    Serial.println(speed);
+    
+    motorFunction(speed, speed);
+    delay(TEST_DURATION);
   }
-  analogWrite(M2R_PIN, 0);
-  delay(500);
+  
+  stopMovement();
+  Serial.println(F("Test complete, motors stopped."));
+  delay(PAUSE_DURATION);
+}
 
-  Serial.println("Motor 2 Reverse");
-  digitalWrite(M2L_PIN, HIGH);
-  for (int speed = 50; speed <= 150; speed += 50) {
-    analogWrite(M2R_PIN, speed);
-    Serial.print("Speed: "); Serial.println(speed);
-    delay(2000);
-  }
-  analogWrite(M2R_PIN, 0);
-  delay(1000);
+// Movement Functions (identical to your driver code)
+void moveForward(int leftSpeed, int rightSpeed) {
+  analogWrite(M1L, leftSpeed);
+  analogWrite(M2R, rightSpeed);
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2L, LOW);
+}
 
-  Serial.println("--- MotorTest Complete ---");
-  while (true) delay(1000);
+void moveBackward(int leftSpeed, int rightSpeed) {
+  analogWrite(M1R, leftSpeed);
+  analogWrite(M2L, rightSpeed);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2R, LOW);
+}
+
+void turnLeft(int leftSpeed, int rightSpeed) {
+  analogWrite(M1R, leftSpeed);
+  analogWrite(M2R, rightSpeed);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2L, LOW);
+}
+
+void turnRight(int leftSpeed, int rightSpeed) {
+  analogWrite(M1L, leftSpeed);
+  analogWrite(M2L, rightSpeed);
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2R, LOW);
+}
+
+void stopMovement() {
+  digitalWrite(M1R, LOW);
+  digitalWrite(M2L, LOW);
+  digitalWrite(M1L, LOW);
+  digitalWrite(M2R, LOW);
 }
