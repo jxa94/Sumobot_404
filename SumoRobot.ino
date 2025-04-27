@@ -3,9 +3,9 @@
 
 // === Pin/channel assignments ===
 // ADC channels for IR sensors
-#define IR_LEFT_CH    0   // A0
-#define IR_MID_CH     1   // A1
-#define IR_RIGHT_CH   2   // A2
+#define IR_LEFT_CH    A0   // A0
+#define IR_MID_CH     A1   // A1
+#define IR_RIGHT_CH   A2   // A2
 // Digital pins (direct port)
 // Back ultrasonic
 #define ULTRA_TRIG_PIN A3 // PC3
