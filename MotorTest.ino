@@ -9,7 +9,7 @@
 #define M2R 6
 
 // Test settings
-const int TEST_SPEEDS[] = {50, 100, 150, 200, 255};
+const int TEST_SPEEDS[] = {50, 100, 150, 200, 240}; 
 const int NUM_SPEEDS = 5;
 const int TEST_DURATION = 2000; // ms per speed level
 const int PAUSE_DURATION = 1000; // ms between tests
