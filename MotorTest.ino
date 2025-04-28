@@ -1,57 +1,145 @@
+// EnhancedMotorTest.ino
+// Comprehensive motor test for your Sumo Bot using same style as driver code
 #include <Arduino.h>
 
-// Motor pins: Digital output
+// Motor pins: Digital output (matching your original driver)
 #define M1L 11
 #define M1R 10
 #define M2L 5
 #define M2R 6
 
-// Constants for motor speed
-const int DEFAULT_SPEED = 200;
-const int MIN_SPEED = 0;
-const int MAX_SPEED = 255;
+// Test settings
+const int TEST_SPEEDS[] = {50, 100, 150, 200, 255};
+const int NUM_SPEEDS = 5;
+const int TEST_DURATION = 2000; // ms per speed level
+const int PAUSE_DURATION = 1000; // ms between tests
 
-int motorChoice = 0;
-int motorSpeed = DEFAULT_SPEED;
-bool isRunning = false;
-unsigned long actionStartTime = 0;
-unsigned long actionDuration = 2000; // Default 2-second duration for movements
+// Function declarations (matching your driver style)
+void moveForward(int leftSpeed, int rightSpeed);
+void moveBackward(int leftSpeed, int rightSpeed);
+void turnLeft(int leftSpeed, int rightSpeed);
+void turnRight(int leftSpeed, int rightSpeed);
+void stopMovement();
+void testMotorSequence(const char* testName, void (*motorFunction)(int, int));
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Robot Motor Test Program");
-  Serial.println("-------------------------");
-  Serial.println("Enter a number to select a motor action:");
-  Serial.println("1: Move Forward");
-  Serial.println("2: Move Backward");
-  Serial.println("3: Turn Left");
-  Serial.println("4: Turn Right");
-  Serial.println("5: Turn on the spot(Left)");
-  Serial.println("6: Turn on the spot(Right)");
-  Serial.println("7: Snake Movement");
-  Serial.println("8: Stop");
-  Serial.println("9: Set Motor Speed (0-255)");
-  Serial.println("10: Set Action Duration (ms)");
   
   // Motor pins
-  pinMode(M2R, OUTPUT);
-  pinMode(M2L, OUTPUT);
   pinMode(M1L, OUTPUT);
   pinMode(M1R, OUTPUT);
+  pinMode(M2L, OUTPUT);
+  pinMode(M2R, OUTPUT);
   
-  // Ensure motors are stopped on startup
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2L, LOW);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2R, LOW);
+  // Ensure motors are stopped
+  stopMovement();
+  
+  Serial.println(F("===== Sumo Bot Motor Test ====="));
+  Serial.println(F("Testing individual motors and movement functions"));
+  delay(2000);
 }
 
+void loop() {
+  // Test individual motors first
+  testSingleMotor("LEFT MOTOR FORWARD", M1L, M1R, LOW);
+  testSingleMotor("LEFT MOTOR BACKWARD", M1L, M1R, HIGH);
+  
+  testSingleMotor("RIGHT MOTOR FORWARD", M2R, M2L, LOW);
+  testSingleMotor("RIGHT MOTOR BACKWARD", M2R, M2L, HIGH);
+  
+  // Test combined movement functions
+  testMotorSequence("BOTH MOTORS FORWARD", moveForward);
+  testMotorSequence("BOTH MOTORS BACKWARD", moveBackward);
+  testMotorSequence("TURN LEFT", turnLeft);
+  testMotorSequence("TURN RIGHT", turnRight);
+  
+  // Test special maneuvers
+  Serial.println(F("\n--- Testing special maneuvers ---"));
+  
+  // Quick direction reversal
+  Serial.println(F("DIRECTION REVERSAL TEST"));
+  moveForward(200, 200);
+  delay(2000);
+  moveBackward(200, 200);
+  delay(2000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  // Spin in place
+  Serial.println(F("SPIN TEST - CLOCKWISE"));
+  turnRight(200, 200);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  Serial.println(F("SPIN TEST - COUNTER-CLOCKWISE"));
+  turnLeft(200, 200);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  // Sharp turn
+  Serial.println(F("SHARP TURN TEST"));
+  moveForward(50, 200);
+  delay(3000);
+  moveForward(200, 50);
+  delay(3000);
+  stopMovement();
+  delay(PAUSE_DURATION);
+  
+  Serial.println(F("\n===== Motor Test Complete ====="));
+  Serial.println(F("Restarting test sequence in 5 seconds..."));
+  delay(5000);
+}
+
+// Function to test a single motor at different speeds
+void testSingleMotor(const char* testName, int pwmPin, int dirPin, int dirValue) {
+  Serial.print(F("\n--- Testing "));
+  Serial.print(testName);
+  Serial.println(F(" ---"));
+  
+  digitalWrite(dirPin, dirValue);
+  
+  for (int i = 0; i < NUM_SPEEDS; i++) {
+    int speed = TEST_SPEEDS[i];
+    Serial.print(F("Speed: "));
+    Serial.println(speed);
+    
+    analogWrite(pwmPin, speed);
+    delay(TEST_DURATION);
+  }
+  
+  analogWrite(pwmPin, 0);
+  Serial.println(F("Test complete, motor stopped."));
+  delay(PAUSE_DURATION);
+}
+
+// Function to test movement functions at different speeds
+void testMotorSequence(const char* testName, void (*motorFunction)(int, int)) {
+  Serial.print(F("\n--- Testing "));
+  Serial.print(testName);
+  Serial.println(F(" ---"));
+  
+  for (int i = 0; i < NUM_SPEEDS; i++) {
+    int speed = TEST_SPEEDS[i];
+    Serial.print(F("Speed: "));
+    Serial.println(speed);
+    
+    motorFunction(speed, speed);
+    delay(TEST_DURATION);
+  }
+  
+  stopMovement();
+  Serial.println(F("Test complete, motors stopped."));
+  delay(PAUSE_DURATION);
+}
+
+// Movement Functions (identical to your driver code)
 void moveForward(int leftSpeed, int rightSpeed) {
   analogWrite(M1L, leftSpeed);
   analogWrite(M2R, rightSpeed);
   digitalWrite(M1R, LOW);
   digitalWrite(M2L, LOW);
-  Serial.println("Moving Forward");
 }
 
 void moveBackward(int leftSpeed, int rightSpeed) {
@@ -59,7 +147,6 @@ void moveBackward(int leftSpeed, int rightSpeed) {
   analogWrite(M2L, rightSpeed);
   digitalWrite(M1L, LOW);
   digitalWrite(M2R, LOW);
-  Serial.println("Moving Backward");
 }
 
 void turnLeft(int leftSpeed, int rightSpeed) {
@@ -67,7 +154,6 @@ void turnLeft(int leftSpeed, int rightSpeed) {
   analogWrite(M2R, rightSpeed);
   digitalWrite(M1L, LOW);
   digitalWrite(M2L, LOW);
-  Serial.println("Turning Left");
 }
 
 void turnRight(int leftSpeed, int rightSpeed) {
@@ -75,40 +161,6 @@ void turnRight(int leftSpeed, int rightSpeed) {
   analogWrite(M2L, rightSpeed);
   digitalWrite(M1R, LOW);
   digitalWrite(M2R, LOW);
-  Serial.println("Turning Right");
-}
-void turnOnSpotLeft(int leftSpeed, int rightSpeed) {
-  analogWrite(M1L, leftSpeed);
-  analogWrite(M2R, rightSpeed);
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2L, LOW);
-  Serial.println("Turning on the spot (Left)");
-}
-void turnOnSpotRight(int leftSpeed, int rightSpeed) {
-  analogWrite(M1R, leftSpeed);
-  analogWrite(M2L, rightSpeed);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2R, LOW);
-  Serial.println("Turning on the spot (Right)");
-}
-
-void snakeMovement() {
-  static bool direction = true;
-  static unsigned long lastChangeTime = millis();
-  unsigned long currentTime = millis();
-
-  if (currentTime - lastChangeTime >= 500) {
-    direction = !direction;
-    lastChangeTime = currentTime;
-  }
-
-  if (direction) {
-    moveForward(255, 150);
-    Serial.println("Snake Movement (Right)");
-  } else {
-    moveForward(150, 255);
-    Serial.println("Snake Movement (Left)");
-  }
 }
 
 void stopMovement() {
@@ -116,94 +168,4 @@ void stopMovement() {
   digitalWrite(M2L, LOW);
   digitalWrite(M1L, LOW);
   digitalWrite(M2R, LOW);
-  Serial.println("Stopped Movement");
-  isRunning = false;
-}
-
-void loop() {
-  // Check if serial data is available
-  if (Serial.available() > 0) {
-    // Read the incoming byte
-    int input = Serial.parseInt();
-    
-    // Consume any remaining characters in the buffer
-    while(Serial.available() > 0) {
-      Serial.read();
-    }
-    
-    // If input is 9, we're setting motor speed
-    if (input == 9) {
-      Serial.println("Enter motor speed (0-255):");
-      while (Serial.available() == 0) {
-        // Wait for input
-      }
-      int newSpeed = Serial.parseInt();
-      if (newSpeed >= MIN_SPEED && newSpeed <= MAX_SPEED) {
-        motorSpeed = newSpeed;
-        Serial.print("Motor speed set to: ");
-        Serial.println(motorSpeed);
-      } else {
-        Serial.println("Invalid speed. Using default.");
-        motorSpeed = DEFAULT_SPEED;
-      }
-    }
-    // If input is 10, we're setting action duration
-    else if (input == 10) {
-      Serial.println("Enter action duration in milliseconds:");
-      while (Serial.available() == 0) {
-        // Wait for input
-      }
-      actionDuration = Serial.parseInt();
-      Serial.print("Action duration set to: ");
-      Serial.print(actionDuration);
-      Serial.println(" ms");
-    }
-    else {
-      motorChoice = input;
-      if (motorChoice >= 1 && motorChoice <= 5) {
-        isRunning = true;
-        actionStartTime = millis();
-      }
-    }
-  }
-
-  // Run the selected motor action
-  if (isRunning) {
-    switch (motorChoice) {
-      case 1:
-        moveForward(motorSpeed, motorSpeed);
-        break;
-      case 2:
-        moveBackward(motorSpeed, motorSpeed);
-        break;
-      case 3:
-        turnLeft(motorSpeed, motorSpeed);
-        break;
-      case 4:
-        turnRight(motorSpeed, motorSpeed);
-        break;
-      case 5:
-        turnOnSpotLeft(motorSpeed, motorSpeed);
-        break;
-      case 6:
-        turnOnSpotRight(motorSpeed, motorSpeed);
-        break;
-      case 7:
-        snakeMovement();
-        break;
-      case 8:
-      default:
-        stopMovement();
-        break;
-    }
-    
-    // Stop after the specified duration
-    if (millis() - actionStartTime >= actionDuration) {
-      stopMovement();
-    }
-  }
-  else if (motorChoice == 6) {
-    stopMovement();
-    motorChoice = 0;
-  }
 }
