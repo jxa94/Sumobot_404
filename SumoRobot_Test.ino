@@ -384,20 +384,25 @@ void stopMovement() {
 
 // IR Distance conversion (adjust based on your specific sensor model)
 int getIRDistance(int sensorPin) {
-  int reading = analogRead(sensorPin);
-  // Convert analog reading to distance in centimeters
-  // The formula below is a rough approximation for the GP2Y0A02YK0F sensor
-  // You may need to calibrate this for your actual sensor
-  if (reading < 40) return IR_MAX_DISTANCE; // Too far or not reliable
-  
-  float distance = 9462.0 / (reading - 16.92);
-  
-  if (distance > IR_MAX_DISTANCE) return IR_MAX_DISTANCE;
-  if (distance < IR_MIN_DISTANCE) return IR_MIN_DISTANCE;
-  
-  return (int)distance;
-}
-
+    int reading = analogRead(sensorPin);
+    
+    // Convert analog reading (0-1023) to voltage (0-5V)
+    float voltage = reading * (5.0 / 1023.0);
+    
+    // Check if voltage is too low (beyond maximum distance)
+    if (voltage < 0.5) return IR_MAX_DISTANCE;
+    
+    // Convert voltage to distance using the inverse relationship
+    // The formula is derived from the second graph showing 1/distance vs voltage
+    float inverse_distance = (voltage - 0.42) / 42.5;
+    float distance = 1.0 / inverse_distance;
+    
+    // Apply limits
+    if (distance > IR_MAX_DISTANCE) return IR_MAX_DISTANCE;
+    if (distance < IR_MIN_DISTANCE) return IR_MIN_DISTANCE;
+    
+    return (int)distance;
+  }
 // Ultrasonic Distance measurement
 long getUltrasonicDistance() {
   // Clear the trigger pin
