@@ -21,12 +21,12 @@
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
-#define IR_REFLECT_CENTER A1
-#define IR_REFLECT_RIGHT A2
+#define IR_REFLECT_CENTER A2
+#define IR_REFLECT_RIGHT A4
 
 // Ultrasonic sensor: Analog input
-#define ULTRASONIC_TRIG A3
-#define ULTRASONIC_ECHO A4
+#define ULTRASONIC_TRIG A1
+#define ULTRASONIC_ECHO A3
 
 // Constants
 const int SPEEDS[] = {50, 100, 150, 200, 240}; 
