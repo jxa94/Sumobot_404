@@ -1,4 +1,4 @@
-// EnhancedMotorTest_BTS7960.ino
+// MotorTest.ino
 // Comprehensive motor test for your Sumo Bot using BTS7960 motor drivers
 #include <Arduino.h>
 
