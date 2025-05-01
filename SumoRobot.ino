@@ -67,6 +67,13 @@ bool opponentDetectedFront = false;
 bool opponentDetectedBack = false;
 int opponentDirection = 0; // 0: none, 1: left, 2: center, 3: right, 4: back
 
+// JSUMO switch state tracking
+bool previousSwitchState = false;
+bool currentSwitchState = false;
+unsigned long lastSwitchChangeTime = 0;
+const unsigned long DEBOUNCE_TIME = 50; // Debounce time in milliseconds
+bool robotActive = false; // Flag to track if the robot is active
+
 // Function declarations
 void moveForward(int leftSpeed, int rightSpeed);
 void moveBackward(int leftSpeed, int rightSpeed);
@@ -81,6 +88,7 @@ void attackOpponent();
 void evadeBoundary();
 void performInitialScan();
 void executeStrategy();
+void handleJsumoSwitch();
 
 void setup() {
   // No Serial communication during operation since RX/TX are used for sensors
@@ -126,13 +134,20 @@ void setup() {
   // Starter switch
   pinMode(JSUMO_SWITCH, INPUT);
   
+  // Initialize switch state
+  currentSwitchState = digitalRead(JSUMO_SWITCH);
+  previousSwitchState = currentSwitchState;
+  
   // Ensure motors are stopped
   stopMovement();
 }
 
 void loop() {
-  // Check if start switch is activated
-  if (digitalRead(JSUMO_SWITCH)) {
+  // Handle the JSUMO switch state changes
+  handleJsumoSwitch();
+  
+  // Only run robot logic if it's active
+  if (robotActive) {
     // Initial 3-second scan without moving
     if (!isInitialScanComplete) {
       if (startTime == 0) {
@@ -165,13 +180,47 @@ void loop() {
     
     // Execute strategy based on sensors and initial scan
     executeStrategy();
-    
   } else {
-    // Robot is off
+    // Robot is inactive, ensure motors are stopped
     stopMovement();
     isInitialScanComplete = false;
     startTime = 0;
   }
+}
+
+// Handle JSUMO switch state changes with debouncing
+void handleJsumoSwitch() {
+  // Read the current state of the switch
+  bool newSwitchState = digitalRead(JSUMO_SWITCH);
+  
+  // Check if the switch state has changed
+  if (newSwitchState != previousSwitchState) {
+    // Update last switch change time
+    lastSwitchChangeTime = millis();
+  }
+  
+  // If the state has been stable for the debounce period
+  if ((millis() - lastSwitchChangeTime) > DEBOUNCE_TIME) {
+    // If the current state is different from the last stable state
+    if (newSwitchState != currentSwitchState) {
+      currentSwitchState = newSwitchState;
+      
+      // If the switch is pressed (HIGH)
+      if (currentSwitchState == HIGH) {
+        // Toggle robot active state
+        robotActive = !robotActive;
+        
+        // Reset scan state if turning robot on
+        if (robotActive) {
+          isInitialScanComplete = false;
+          startTime = 0;
+        }
+      }
+    }
+  }
+  
+  // Save the current reading for next comparison
+  previousSwitchState = newSwitchState;
 }
 
 // Perform initial scan using only sensors (no movement)
