@@ -1,23 +1,30 @@
 #include <Arduino.h>
 
-// Motor pins: Digital output
-#define M1L 11
-#define M1R 10
-#define M2L 5
-#define M2R 6
+// BTS7960 Motor control pins
+// Motor 1 (Left)
+#define M1_RPWM 11  // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M1_LPWM 10  // Left/Backward PWM pin - connect to LPWM on BTS7960
+#define M1_R_EN 9   // Right/Forward enable pin - connect to R_EN on BTS7960
+#define M1_L_EN 8   // Left/Backward enable pin - connect to L_EN on BTS7960
+
+// Motor 2 (Right)
+#define M2_RPWM 6   // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M2_LPWM 5   // Left/Backward PWM pin - connect to LPWM on BTS7960
+#define M2_R_EN 4   // Right/Forward enable pin - connect to R_EN on BTS7960
+#define M2_L_EN 3   // Left/Backward enable pin - connect to L_EN on BTS7960
 
 // Starter switch: Digital input
-#define JSUMO_SWITCH 4
+#define JSUMO_SWITCH 7
 
 // Line sensors: Digital input
 #define LINE_SENSOR_FL 2  // Front-left
-#define LINE_SENSOR_FR 3  // Front-right
-#define LINE_SENSOR_BL 12 // Back-left
-#define LINE_SENSOR_BR 13 // Back-right
+#define LINE_SENSOR_FR 12  // Front-right
+#define LINE_SENSOR_BL 13 // Back-left
+#define LINE_SENSOR_BR A5 // Back-right (using analog pin as digital)
 
 // Bump sensors
-#define BUMP_LEFT 7
-#define BUMP_RIGHT 8
+#define BUMP_LEFT 0   // Using RX pin (D0)
+#define BUMP_RIGHT 1  // Using TX pin (D1)
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
@@ -29,7 +36,7 @@
 #define ULTRASONIC_ECHO A4
 
 // Constants
-const int SPEEDS[] = {50, 100, 150, 200, 240}; 
+const int SPEEDS[] = {40, 80, 120, 160, 200}; 
 const int ONstate = 1;
 const int LINE_FL_BIT = 0;
 const int LINE_FR_BIT = 1;
@@ -60,6 +67,13 @@ bool opponentDetectedFront = false;
 bool opponentDetectedBack = false;
 int opponentDirection = 0; // 0: none, 1: left, 2: center, 3: right, 4: back
 
+// JSUMO switch state tracking
+bool previousSwitchState = false;
+bool currentSwitchState = false;
+unsigned long lastSwitchChangeTime = 0;
+const unsigned long DEBOUNCE_TIME = 50; // Debounce time in milliseconds
+bool robotActive = false; // Flag to track if the robot is active
+
 // Function declarations
 void moveForward(int leftSpeed, int rightSpeed);
 void moveBackward(int leftSpeed, int rightSpeed);
@@ -74,15 +88,29 @@ void attackOpponent();
 void evadeBoundary();
 void performInitialScan();
 void executeStrategy();
+void handleJsumoSwitch();
 
 void setup() {
-  Serial.begin(9600);
+  // No Serial communication during operation since RX/TX are used for sensors
+  // Serial.begin(9600);  // Commented out as we're using pins 0,1 for sensors
 
-  // Motor pins
-  pinMode(M2R, OUTPUT);
-  pinMode(M2L, OUTPUT);
-  pinMode(M1L, OUTPUT);
-  pinMode(M1R, OUTPUT);
+  // Motor 1 pins
+  pinMode(M1_RPWM, OUTPUT);
+  pinMode(M1_LPWM, OUTPUT);
+  pinMode(M1_R_EN, OUTPUT);
+  pinMode(M1_L_EN, OUTPUT);
+  
+  // Motor 2 pins
+  pinMode(M2_RPWM, OUTPUT);
+  pinMode(M2_LPWM, OUTPUT);
+  pinMode(M2_R_EN, OUTPUT);
+  pinMode(M2_L_EN, OUTPUT);
+  
+  // Enable the BTS7960 drivers
+  digitalWrite(M1_R_EN, HIGH);
+  digitalWrite(M1_L_EN, HIGH);
+  digitalWrite(M2_R_EN, HIGH);
+  digitalWrite(M2_L_EN, HIGH);
 
   // Line sensors
   pinMode(LINE_SENSOR_FL, INPUT_PULLUP);
@@ -105,11 +133,21 @@ void setup() {
 
   // Starter switch
   pinMode(JSUMO_SWITCH, INPUT);
+  
+  // Initialize switch state
+  currentSwitchState = digitalRead(JSUMO_SWITCH);
+  previousSwitchState = currentSwitchState;
+  
+  // Ensure motors are stopped
+  stopMovement();
 }
 
 void loop() {
-  // Check if start switch is activated
-  if (digitalRead(JSUMO_SWITCH)) {
+  // Handle the JSUMO switch state changes
+  handleJsumoSwitch();
+  
+  // Only run robot logic if it's active
+  if (robotActive) {
     // Initial 3-second scan without moving
     if (!isInitialScanComplete) {
       if (startTime == 0) {
@@ -142,13 +180,47 @@ void loop() {
     
     // Execute strategy based on sensors and initial scan
     executeStrategy();
-    
   } else {
-    // Robot is off
+    // Robot is inactive, ensure motors are stopped
     stopMovement();
     isInitialScanComplete = false;
     startTime = 0;
   }
+}
+
+// Handle JSUMO switch state changes with debouncing
+void handleJsumoSwitch() {
+  // Read the current state of the switch
+  bool newSwitchState = digitalRead(JSUMO_SWITCH);
+  
+  // Check if the switch state has changed
+  if (newSwitchState != previousSwitchState) {
+    // Update last switch change time
+    lastSwitchChangeTime = millis();
+  }
+  
+  // If the state has been stable for the debounce period
+  if ((millis() - lastSwitchChangeTime) > DEBOUNCE_TIME) {
+    // If the current state is different from the last stable state
+    if (newSwitchState != currentSwitchState) {
+      currentSwitchState = newSwitchState;
+      
+      // If the switch is pressed (HIGH)
+      if (currentSwitchState == HIGH) {
+        // Toggle robot active state
+        robotActive = !robotActive;
+        
+        // Reset scan state if turning robot on
+        if (robotActive) {
+          isInitialScanComplete = false;
+          startTime = 0;
+        }
+      }
+    }
+  }
+  
+  // Save the current reading for next comparison
+  previousSwitchState = newSwitchState;
 }
 
 // Perform initial scan using only sensors (no movement)
@@ -253,40 +325,51 @@ void executeStrategy() {
   }
 }
 
-// Movement Functions
+// Movement Functions for BTS7960
 void moveForward(int leftSpeed, int rightSpeed) {
-  analogWrite(M1L, leftSpeed);
-  analogWrite(M2R, rightSpeed);
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2L, LOW);
+  // Left motor forward
+  analogWrite(M1_RPWM, leftSpeed);
+  analogWrite(M1_LPWM, 0);
+  
+  // Right motor forward
+  analogWrite(M2_RPWM, rightSpeed);
+  analogWrite(M2_LPWM, 0);
 }
 
 void moveBackward(int leftSpeed, int rightSpeed) {
-  analogWrite(M1R, leftSpeed);
-  analogWrite(M2L, rightSpeed);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2R, LOW);
+  // Left motor backward
+  analogWrite(M1_LPWM, leftSpeed);
+  analogWrite(M1_RPWM, 0);
+  
+  // Right motor backward
+  analogWrite(M2_LPWM, rightSpeed);
+  analogWrite(M2_RPWM, 0);
 }
 
 void turnLeft(int leftSpeed, int rightSpeed) {
-  analogWrite(M1R, leftSpeed);
-  analogWrite(M2R, rightSpeed);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2L, LOW);
+  // Left motor backward, Right motor forward
+  analogWrite(M1_LPWM, leftSpeed);
+  analogWrite(M1_RPWM, 0);
+  
+  analogWrite(M2_RPWM, rightSpeed);
+  analogWrite(M2_LPWM, 0);
 }
 
 void turnRight(int leftSpeed, int rightSpeed) {
-  analogWrite(M1L, leftSpeed);
-  analogWrite(M2L, rightSpeed);
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2R, LOW);
+  // Left motor forward, Right motor backward
+  analogWrite(M1_RPWM, leftSpeed);
+  analogWrite(M1_LPWM, 0);
+  
+  analogWrite(M2_LPWM, rightSpeed);
+  analogWrite(M2_RPWM, 0);
 }
 
 void stopMovement() {
-  digitalWrite(M1R, LOW);
-  digitalWrite(M2L, LOW);
-  digitalWrite(M1L, LOW);
-  digitalWrite(M2R, LOW);
+  // Stop all motors
+  analogWrite(M1_RPWM, 0);
+  analogWrite(M1_LPWM, 0);
+  analogWrite(M2_RPWM, 0);
+  analogWrite(M2_LPWM, 0);
 }
 
 // IR Distance conversion (adjust based on your specific sensor model)
