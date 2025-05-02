@@ -15,8 +15,8 @@
 #define JSUMO_SWITCH 7
 
 // Bump sensors - moved from RX/TX pins
-#define BUMP_LEFT 8   // Moved from RX pin (D0) to D8
-#define BUMP_RIGHT 9  // Moved from TX pin (D1) to D9
+#define BUMP_LEFT 8   // connect to 8
+#define BUMP_RIGHT 9  // connect to 9
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
@@ -28,28 +28,41 @@
 #define ULTRASONIC_ECHO A4
 
 // Constants
-const int SPEEDS[] = {40, 80, 120, 160, 200}; 
+const int SPEED_SLOW = 40;    // Slow search speed
+const int SPEED_MEDIUM = 80; // Medium attack speed
+const int SPEED_FAST = 120;   // Fast attack speed
+const int SPEED_MAX = 200;    // Maximum speed for direct contact
+
 const int ONstate = 1;
 const int BUMP_LEFT_BIT = 0;
 const int BUMP_RIGHT_BIT = 1;
 
 // IR sensor thresholds and constants
-const int IR_MAX_DISTANCE = 150; // cm - maximum reliable distance
-const int IR_MIN_DISTANCE = 20;  // cm - minimum reliable distance
-const int IR_DETECTION_THRESHOLD = 80; // cm - consider opponent detected below this value
+const int IR_MAX_DISTANCE = 150;         // cm - maximum reliable distance
+const int IR_MIN_DISTANCE = 20;          // cm - minimum reliable distance
+const int IR_DETECTION_THRESHOLD = 80;   // cm - consider opponent detected below this value
+const int IR_CLOSE_THRESHOLD = 40;       // cm - opponent is very close
+const int IR_TOLERANCE = 10;             // Percentage tolerance for sensor readings to avoid small adjustments
 
 // Global variables
 unsigned long startTime = 0;
 bool isInitialScanComplete = false;
 unsigned long lastScanTime = 0;
+unsigned long lastAdjustmentTime = 0;    // For continuous direction adjustment
 int scanDirection = 1; // 1 for clockwise, -1 for counter-clockwise
 int bumpSensorState = 0;
 int attackMode = 0; // 0: searching, 1: attacking front, 2: attacking from side
 
-// Initial scan results
-bool opponentDetectedFront = false;
-bool opponentDetectedBack = false;
-int opponentDirection = 0; // 0: none, 1: left, 2: center, 3: right, 4: back
+// Continuous scanning variables
+int lastLeftDist = IR_MAX_DISTANCE;
+int lastCenterDist = IR_MAX_DISTANCE;
+int lastRightDist = IR_MAX_DISTANCE;
+long lastBackDist = 100;
+
+// Direction and tracking
+int preferredDirection = 0;  // For maintaining pursuit direction
+unsigned long lastOpponentDetection = 0;
+bool isOpponentVisible = false;
 
 // JSUMO switch state tracking
 bool previousSwitchState = false;
@@ -68,10 +81,11 @@ int getIRDistance(int sensorPin);
 long getUltrasonicDistance();
 void updateSensorStates();
 void searchOpponent();
-void attackOpponent();
+void attackOpponent(int leftDist, int centerDist, int rightDist);
 void performInitialScan();
 void executeStrategy();
 void handleJsumoSwitch();
+void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist);
 
 void setup() {
   // Serial communication can now be enabled since we're not using RX/TX pins
@@ -122,9 +136,8 @@ void loop() {
       if (startTime == 0) {
         startTime = millis();
         // Reset opponent detection flags
-        opponentDetectedFront = false;
-        opponentDetectedBack = false;
-        opponentDirection = 0;
+        isOpponentVisible = false;
+        preferredDirection = 0;
       }
       
       // During the 3-second period, only perform scanning
@@ -140,7 +153,7 @@ void loop() {
     // Update sensor readings
     updateSensorStates();
     
-    // Execute strategy based on sensors and initial scan
+    // Execute strategy based on sensors and continuous scanning
     executeStrategy();
   } else {
     // Robot is inactive, ensure motors are stopped
@@ -195,95 +208,169 @@ void performInitialScan() {
   // Read ultrasonic sensor (behind the robot)
   long backDist = getUltrasonicDistance();
   
-  // Check front direction (IR sensors)
+  // Update last distances
+  lastLeftDist = leftDist;
+  lastCenterDist = centerDist;
+  lastRightDist = rightDist;
+  lastBackDist = backDist;
+  
+  // Check if opponent is detected in any direction
   if (centerDist < IR_DETECTION_THRESHOLD || 
       leftDist < IR_DETECTION_THRESHOLD || 
-      rightDist < IR_DETECTION_THRESHOLD) {
+      rightDist < IR_DETECTION_THRESHOLD ||
+      (backDist > 0 && backDist < 30)) {
     
-    opponentDetectedFront = true;
+    isOpponentVisible = true;
+    lastOpponentDetection = millis();
     
-    // Determine most likely direction
-    if (centerDist < leftDist && centerDist < rightDist) {
-      opponentDirection = 2; // center
+    // Determine preferred direction
+    if (backDist > 0 && backDist < 30) {
+      // Opponent is behind, choose a turn direction
+      preferredDirection = (random(2) == 0) ? -1 : 1; // Randomly choose turn direction
+    } else if (centerDist < leftDist && centerDist < rightDist) {
+      preferredDirection = 0; // straight ahead
     } else if (leftDist < rightDist) {
-      opponentDirection = 1; // left
+      preferredDirection = -1; // left
     } else {
-      opponentDirection = 3; // right
+      preferredDirection = 1; // right
     }
-  }
-  
-  // Check back direction (ultrasonic)
-  if (backDist > 0 && backDist < 30) {
-    opponentDetectedBack = true;
-    opponentDirection = 4; // back
   }
 }
 
-// Execute strategy based on sensors and initial scan
+// Execute strategy based on sensors and continuous scanning
 void executeStrategy() {
-  // First check bump sensors as they indicate direct contact
-  if (bumpSensorState > 0) {
-    attackMode = 1;
-    attackOpponent();
-    return;
-  }
-  
   // Read current sensor data
   int leftDist = getIRDistance(IR_REFLECT_LEFT);
   int centerDist = getIRDistance(IR_REFLECT_CENTER);
   int rightDist = getIRDistance(IR_REFLECT_RIGHT);
   long backDist = getUltrasonicDistance();
   
-  // If opponent is directly detected now, override initial scan
-  if (centerDist < IR_DETECTION_THRESHOLD) {
+  // Update last distances for tracking
+  lastLeftDist = leftDist;
+  lastCenterDist = centerDist;
+  lastRightDist = rightDist;
+  lastBackDist = backDist;
+  
+  // First check bump sensors as they indicate direct contact
+  if (bumpSensorState > 0) {
     attackMode = 1;
-    moveForward(SPEEDS[3], SPEEDS[3]); // Medium speed ahead
+    attackOpponent(leftDist, centerDist, rightDist);
     return;
-  } else if (leftDist < IR_DETECTION_THRESHOLD && leftDist < rightDist) {
-    attackMode = 2;
-    moveForward(SPEEDS[2], SPEEDS[3]); // Turn left while moving forward
-    return;
-  } else if (rightDist < IR_DETECTION_THRESHOLD && rightDist < leftDist) {
-    attackMode = 2;
-    moveForward(SPEEDS[3], SPEEDS[2]); // Turn right while moving forward
-    return;
-  } else if (backDist < 30 && backDist > 0) {
-    // Opponent is behind
-    attackMode = 2;
-    // Turn around to face opponent - use non-blocking approach
-    if (scanDirection == 1) {
-      turnRight(SPEEDS[4], SPEEDS[4]);
+  }
+  
+  // Check if opponent is detected
+  bool opponentDetected = (centerDist < IR_DETECTION_THRESHOLD || 
+                          leftDist < IR_DETECTION_THRESHOLD || 
+                          rightDist < IR_DETECTION_THRESHOLD ||
+                          (backDist > 0 && backDist < 30));
+  
+  if (opponentDetected) {
+    isOpponentVisible = true;
+    lastOpponentDetection = millis();
+    attackMode = 1;
+    
+    // Adjust direction to face opponent
+    adjustDirectionToOpponent(leftDist, centerDist, rightDist, backDist);
+  } else {
+    // Check if we've recently seen the opponent (within 1 second)
+    if (millis() - lastOpponentDetection < 1000) {
+      // Continue in the same direction briefly to try to reacquire
+      if (preferredDirection < 0) {
+        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+      } else if (preferredDirection > 0) {
+        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+      } else {
+        moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+      }
     } else {
-      turnLeft(SPEEDS[4], SPEEDS[4]);
+      // No opponent detected for a while, go back to search mode
+      isOpponentVisible = false;
+      attackMode = 0;
+      searchOpponent();
+    }
+  }
+}
+
+// Adjust direction to keep facing the opponent
+void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist) {
+  // Check if we need to perform a major direction adjustment
+  if (backDist > 0 && backDist < 30 && 
+      (leftDist >= IR_DETECTION_THRESHOLD && 
+       centerDist >= IR_DETECTION_THRESHOLD && 
+       rightDist >= IR_DETECTION_THRESHOLD)) {
+    // Opponent is behind us, turn around quickly
+    if (scanDirection == 1) {
+      turnRight(SPEED_FAST, SPEED_FAST);
+    } else {
+      turnLeft(SPEED_FAST, SPEED_FAST);
     }
     return;
   }
   
-  // If nothing directly detected, use initial scan results
-  if (opponentDirection > 0) {
-    switch (opponentDirection) {
-      case 1: // left
-        turnLeft(SPEEDS[3], SPEEDS[3]);
-        break;
-      case 2: // center
-        moveForward(SPEEDS[3], SPEEDS[3]); // Medium speed
-        break;
-      case 3: // right
-        turnRight(SPEEDS[3], SPEEDS[3]);
-        break;
-      case 4: // back
-        // Continue turning to face opponent
-        if (scanDirection == 1) {
-          turnRight(SPEEDS[4], SPEEDS[4]);
-        } else {
-          turnLeft(SPEEDS[4], SPEEDS[4]);
-        }
-        break;
+  // Calculate difference percentages to implement tolerance
+  int leftRightDiff = 0;
+  if (leftDist < IR_DETECTION_THRESHOLD && rightDist < IR_DETECTION_THRESHOLD) {
+    // Calculate percentage difference between left and right sensors
+    if (leftDist <= rightDist) {
+      leftRightDiff = ((rightDist - leftDist) * 100) / rightDist;
+    } else {
+      leftRightDiff = -((leftDist - rightDist) * 100) / leftDist;
     }
-  } else {
-    // No opponent detected, search mode
-    attackMode = 0;
-    searchOpponent();
+  }
+  
+  // Opponent is in front - fine-tune direction
+  if (centerDist < IR_DETECTION_THRESHOLD) {
+    // Opponent directly ahead - move forward
+    if (centerDist < IR_CLOSE_THRESHOLD) {
+      // Close opponent - higher speed
+      moveForward(SPEED_FAST, SPEED_FAST);
+    } else {
+      // Distant opponent - moderate speed
+      moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+    }
+    preferredDirection = 0;
+  } 
+  else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD && leftRightDiff > IR_TOLERANCE) {
+    // Opponent is to the left AND difference is significant (> tolerance) - adjust left while moving forward
+    if (leftDist < IR_CLOSE_THRESHOLD) {
+      // Close opponent - sharper turn
+      moveForward(SPEED_SLOW, SPEED_FAST);
+    } else {
+      // Distant opponent - gentle turn
+      moveForward(SPEED_MEDIUM, SPEED_FAST);
+    }
+    preferredDirection = -1;
+  } 
+  else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD && leftRightDiff < -IR_TOLERANCE) {
+    // Opponent is to the right AND difference is significant (> tolerance) - adjust right while moving forward
+    if (rightDist < IR_CLOSE_THRESHOLD) {
+      // Close opponent - sharper turn
+      moveForward(SPEED_FAST, SPEED_SLOW);
+    } else {
+      // Distant opponent - gentle turn
+      moveForward(SPEED_FAST, SPEED_MEDIUM);
+    }
+    preferredDirection = 1;
+  }
+  else if (leftDist < IR_DETECTION_THRESHOLD || rightDist < IR_DETECTION_THRESHOLD) {
+    // Opponent is detected but difference is within tolerance - move forward without turning
+    if (min(leftDist, rightDist) < IR_CLOSE_THRESHOLD) {
+      moveForward(SPEED_FAST, SPEED_FAST);
+    } else {
+      moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+    }
+  }
+  else {
+    // No clear reading but we know opponent is somewhere
+    // Continue in the preferred direction if we have one
+    if (preferredDirection < 0) {
+      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+    } else if (preferredDirection > 0) {
+      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+    } else {
+      // If no preferred direction, revert to search
+      searchOpponent();
+    }
   }
 }
 
@@ -383,36 +470,59 @@ void updateSensorStates() {
                     (digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
 }
 
-// Search pattern to find opponent
+// Improved search pattern to find opponent
 void searchOpponent() {
-  // Change scan direction every 3 seconds without using delay
-  if (millis() - lastScanTime > 3000) {
+  // Use oscillating pattern for searching - change direction regularly
+  unsigned long currentTime = millis();
+  
+  // Change scan direction every 2.5 seconds to cover more area
+  if (currentTime - lastScanTime > 2500) {
     scanDirection = -scanDirection;
-    lastScanTime = millis();
+    lastScanTime = currentTime;
+    
+    // Every other direction change, move forward a bit to explore
+    static bool moveForwardFlag = false;
+    if (moveForwardFlag) {
+      // Move forward briefly to explore different areas of the ring
+      moveForward(SPEED_SLOW, SPEED_SLOW);
+      delay(500); // Short forward movement
+    }
+    moveForwardFlag = !moveForwardFlag;
   }
   
-  if (scanDirection == 1) {
-    // Clockwise spin
-    turnRight(SPEEDS[3], SPEEDS[3]);
+  // Implement a combination of turning and moving forward for more area coverage
+  if (currentTime % 5000 < 3500) {
+    // Spin to scan
+    if (scanDirection == 1) {
+      // Clockwise spin
+      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+    } else {
+      // Counter-clockwise spin
+      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+    }
   } else {
-    // Counter-clockwise spin
-    turnLeft(SPEEDS[3], SPEEDS[3]);
+    // Move forward in arc (slight turn while moving)
+    if (scanDirection == 1) {
+      moveForward(SPEED_MEDIUM, SPEED_SLOW);
+    } else {
+      moveForward(SPEED_SLOW, SPEED_MEDIUM);
+    }
   }
 }
 
 // Attack opponent based on sensor readings
-void attackOpponent() {
+void attackOpponent(int leftDist, int centerDist, int rightDist) {
   // If both bump sensors are triggered, go full power
   if ((bumpSensorState & ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) == 
       ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) {
-    moveForward(SPEEDS[4], SPEEDS[4]); // Maximum speed
+    moveForward(SPEED_MAX, SPEED_MAX); // Maximum speed
   }
   // If left bump sensor is triggered, push harder on left side
   else if (bumpSensorState & (1 << BUMP_LEFT_BIT)) {
-    moveForward(SPEEDS[4], SPEEDS[3]);
+    moveForward(SPEED_MAX, SPEED_FAST);
   }
   // If right bump sensor is triggered, push harder on right side
   else if (bumpSensorState & (1 << BUMP_RIGHT_BIT)) {
-    moveForward(SPEEDS[3], SPEEDS[4]);
+    moveForward(SPEED_FAST, SPEED_MAX);
   }
 }
