@@ -1,5 +1,5 @@
 // SensorTest.ino
-// Comprehensive sensor testing for Sumo Bot
+// Comprehensive sensor testing for Sumo Bot (Line sensors removed)
 #include <Arduino.h>
 
 // Motor pins: Digital output
@@ -10,12 +10,6 @@
 
 // Starter switch: Digital input
 #define JSUMO_SWITCH 4
-
-// Line sensors: Digital input
-#define LINE_SENSOR_FL 2  // Front-left
-#define LINE_SENSOR_FR 3  // Front-right
-#define LINE_SENSOR_BL 12 // Back-left
-#define LINE_SENSOR_BR 13 // Back-right
 
 // Bump sensors
 #define BUMP_LEFT 7
@@ -31,12 +25,8 @@
 #define ULTRASONIC_ECHO A4
 
 // Constants
-const int LINE_FL_BIT = 0;
-const int LINE_FR_BIT = 1;
-const int LINE_BL_BIT = 2;
-const int LINE_BR_BIT = 3;
-const int BUMP_LEFT_BIT = 4;
-const int BUMP_RIGHT_BIT = 5;
+const int BUMP_LEFT_BIT = 0;
+const int BUMP_RIGHT_BIT = 1;
 
 // IR sensor constants
 const int IR_MAX_DISTANCE = 150; // cm - maximum reliable distance
@@ -49,7 +39,6 @@ void updateSensorStates();
 void displaySensorReadings();
 
 // Global variables to store sensor states
-int lineSensorState = 0;
 int bumpSensorState = 0;
 int leftIRValue = 0;
 int centerIRValue = 0;
@@ -61,12 +50,6 @@ long ultrasonicDistance = 0;
 
 void setup() {
   Serial.begin(9600);
-
-  // Line sensors
-  pinMode(LINE_SENSOR_FL, INPUT_PULLUP);
-  pinMode(LINE_SENSOR_FR, INPUT_PULLUP);
-  pinMode(LINE_SENSOR_BL, INPUT_PULLUP);
-  pinMode(LINE_SENSOR_BR, INPUT_PULLUP);
 
   // IR sensors
   pinMode(IR_REFLECT_LEFT, INPUT);
@@ -85,7 +68,7 @@ void setup() {
   pinMode(JSUMO_SWITCH, INPUT);
 
   Serial.println(F("===== Sumo Bot Sensor Test ====="));
-  Serial.println(F("Monitoring all sensors: IR, Ultrasonic, Line, and Bump"));
+  Serial.println(F("Monitoring sensors: IR, Ultrasonic, and Bump"));
   delay(1000);
 }
 
@@ -102,12 +85,6 @@ void loop() {
 
 // Update sensor states
 void updateSensorStates() {
-  // Line sensors (HIGH on white boundary)
-  lineSensorState = (digitalRead(LINE_SENSOR_FL) << LINE_FL_BIT) |
-                    (digitalRead(LINE_SENSOR_FR) << LINE_FR_BIT) |
-                    (digitalRead(LINE_SENSOR_BL) << LINE_BL_BIT) |
-                    (digitalRead(LINE_SENSOR_BR) << LINE_BR_BIT);
-  
   // Bump sensors (active LOW with pullup)
   bumpSensorState = (!digitalRead(BUMP_LEFT) << BUMP_LEFT_BIT) |
                     (!digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
@@ -196,13 +173,6 @@ void displaySensorReadings() {
     Serial.print(ultrasonicDistance);
     Serial.println(F(" cm"));
   }
-  
-  // Display line sensors
-  Serial.println(F("\n-- Line Sensors --"));
-  Serial.print(F("Front-Left: ")); Serial.println((lineSensorState & (1 << LINE_FL_BIT)) ? "WHITE" : "BLACK");
-  Serial.print(F("Front-Right: ")); Serial.println((lineSensorState & (1 << LINE_FR_BIT)) ? "WHITE" : "BLACK");
-  Serial.print(F("Back-Left: ")); Serial.println((lineSensorState & (1 << LINE_BL_BIT)) ? "WHITE" : "BLACK");
-  Serial.print(F("Back-Right: ")); Serial.println((lineSensorState & (1 << LINE_BR_BIT)) ? "WHITE" : "BLACK");
   
   // Display bump sensors
   Serial.println(F("\n-- Bump Sensors --"));
