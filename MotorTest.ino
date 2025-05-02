@@ -6,14 +6,10 @@
 // Motor 1
 #define M1_RPWM 11  // Right/Forward PWM pin - connect to RPWM on BTS7960
 #define M1_LPWM 10  // Left/Backward PWM pin - connect to LPWM on BTS7960
-#define M1_R_EN 9   // Right/Forward enable pin - connect to R_EN on BTS7960
-#define M1_L_EN 8   // Left/Backward enable pin - connect to L_EN on BTS7960
 
 // Motor 2
 #define M2_RPWM 6   // Right/Forward PWM pin - connect to RPWM on BTS7960
 #define M2_LPWM 5   // Left/Backward PWM pin - connect to LPWM on BTS7960
-#define M2_R_EN 4   // Right/Forward enable pin - connect to R_EN on BTS7960
-#define M2_L_EN 3   // Left/Backward enable pin - connect to L_EN on BTS7960
 
 // Test settings
 const int TEST_SPEEDS[] = {50, 100, 150, 200, 240}; 
@@ -35,20 +31,10 @@ void setup() {
   // Motor 1 pins
   pinMode(M1_RPWM, OUTPUT);
   pinMode(M1_LPWM, OUTPUT);
-  pinMode(M1_R_EN, OUTPUT);
-  pinMode(M1_L_EN, OUTPUT);
   
   // Motor 2 pins
   pinMode(M2_RPWM, OUTPUT);
   pinMode(M2_LPWM, OUTPUT);
-  pinMode(M2_R_EN, OUTPUT);
-  pinMode(M2_L_EN, OUTPUT);
-  
-  // Enable the BTS7960 drivers
-  digitalWrite(M1_R_EN, HIGH);
-  digitalWrite(M1_L_EN, HIGH);
-  digitalWrite(M2_R_EN, HIGH);
-  digitalWrite(M2_L_EN, HIGH);
   
   // Ensure motors are stopped
   stopMovement();
@@ -63,8 +49,9 @@ void loop() {
   testSingleMotor("LEFT MOTOR FORWARD", M1_RPWM, M1_LPWM, true);
   testSingleMotor("LEFT MOTOR BACKWARD", M1_LPWM, M1_RPWM, false);
   
-  testSingleMotor("RIGHT MOTOR FORWARD", M2_RPWM, M2_LPWM, true);
-  testSingleMotor("RIGHT MOTOR BACKWARD", M2_LPWM, M2_RPWM, false);
+  // Note: For right motor, "forward" means LPWM and "backward" means RPWM due to parallel orientation
+  testSingleMotor("RIGHT MOTOR FORWARD", M2_LPWM, M2_RPWM, true);  // Reversed due to parallel mounting
+  testSingleMotor("RIGHT MOTOR BACKWARD", M2_RPWM, M2_LPWM, false);  // Reversed due to parallel mounting
   
   // Test combined movement functions
   testMotorSequence("BOTH MOTORS FORWARD", moveForward);
@@ -155,18 +142,28 @@ void testMotorSequence(const char* testName, void (*motorFunction)(int, int)) {
   delay(PAUSE_DURATION);
 }
 
-// Movement Functions adapted for BTS7960
+// Movement Functions adapted for BTS7960 with parallel mounted motors
 void moveForward(int leftSpeed, int rightSpeed) {
   // Left motor forward
   analogWrite(M1_RPWM, leftSpeed);
   analogWrite(M1_LPWM, 0);
   
-  // Right motor forward
+  // Right motor backward (since motors are in parallel, opposite direction)
+  analogWrite(M2_LPWM, rightSpeed);
+  analogWrite(M2_RPWM, 0);
+}
+
+void moveBackward(int leftSpeed, int rightSpeed) {
+  // Left motor backward
+  analogWrite(M1_LPWM, leftSpeed);
+  analogWrite(M1_RPWM, 0);
+  
+  // Right motor forward (since motors are in parallel, opposite direction)
   analogWrite(M2_RPWM, rightSpeed);
   analogWrite(M2_LPWM, 0);
 }
 
-void moveBackward(int leftSpeed, int rightSpeed) {
+void turnLeft(int leftSpeed, int rightSpeed) {
   // Left motor backward
   analogWrite(M1_LPWM, leftSpeed);
   analogWrite(M1_RPWM, 0);
@@ -176,22 +173,14 @@ void moveBackward(int leftSpeed, int rightSpeed) {
   analogWrite(M2_RPWM, 0);
 }
 
-void turnLeft(int leftSpeed, int rightSpeed) {
-  // Left motor backward, Right motor forward
-  analogWrite(M1_LPWM, leftSpeed);
-  analogWrite(M1_RPWM, 0);
-  
-  analogWrite(M2_RPWM, rightSpeed);
-  analogWrite(M2_LPWM, 0);
-}
-
 void turnRight(int leftSpeed, int rightSpeed) {
-  // Left motor forward, Right motor backward
+  // Left motor forward
   analogWrite(M1_RPWM, leftSpeed);
   analogWrite(M1_LPWM, 0);
   
-  analogWrite(M2_LPWM, rightSpeed);
-  analogWrite(M2_RPWM, 0);
+  // Right motor forward
+  analogWrite(M2_RPWM, rightSpeed);
+  analogWrite(M2_LPWM, 0);
 }
 
 void stopMovement() {
