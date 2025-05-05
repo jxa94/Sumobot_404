@@ -269,24 +269,22 @@ void executeStrategy() {
     lastOpponentDetection = millis();
     attackMode = 1;
     
-    // Adjust direction to face opponent
-    adjustDirectionToOpponent(leftDist, centerDist, rightDist, backDist);
-  } else {
-    // Check if we've recently seen the opponent (within 1 second)
-    if (millis() - lastOpponentDetection < 1000) {
-      // Continue in the same direction briefly to try to reacquire
-      if (preferredDirection < 0) {
-        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
-      } else if (preferredDirection > 0) {
-        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
-      } else {
-        moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
-      }
+    // Simplified direction adjustment - directly face center and charge
+    if (centerDist < IR_DETECTION_THRESHOLD) {
+      moveForward(SPEED_SLOW, SPEED_SLOW);
+    } else if (leftDist < rightDist) {
+      turnLeft(SPEED_SLOW, SPEED_SLOW);
     } else {
-      // No opponent detected for a while, go back to search mode
-      isOpponentVisible = false;
-      attackMode = 0;
-      searchOpponent();
+      turnRight(SPEED_SLOW, SPEED_SLOW);
+    }
+  } else {
+    // No opponent detected, perform in-place rotation search
+    isOpponentVisible = false;
+    attackMode = 0;
+    if (scanDirection == 1) {
+      turnRight(SPEED_SLOW, SPEED_SLOW);
+    } else {
+      turnLeft(SPEED_SLOW, SPEED_SLOW);
     }
   }
 }
