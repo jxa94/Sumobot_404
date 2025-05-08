@@ -258,45 +258,60 @@ void executeStrategy() {
     return;
   }
   
-  // Check if opponent is detected
+  // Check if opponent is detected - use more conservative thresholds
+  // to ensure we only move when we're confident about opponent detection
   bool opponentDetected = (centerDist < IR_DETECTION_THRESHOLD || 
                           leftDist < IR_DETECTION_THRESHOLD || 
                           rightDist < IR_DETECTION_THRESHOLD ||
                           (backDist > 0 && backDist < 30));
   
   if (opponentDetected) {
+    // Opponent detected - now we can move
     isOpponentVisible = true;
     lastOpponentDetection = millis();
     attackMode = 1;
     
-    // Simplified direction adjustment - directly face center and charge
+    // Adjust direction and move toward opponent
     if (centerDist < IR_DETECTION_THRESHOLD) {
-      moveForward(SPEED_SLOW, SPEED_SLOW);
-    } else if (leftDist < rightDist) {
-      turnLeft(SPEED_SLOW, SPEED_SLOW);
-    } else {
-      turnRight(SPEED_SLOW, SPEED_SLOW);
+      // Opponent directly ahead - move forward
+      if (centerDist < IR_CLOSE_THRESHOLD) {
+        // Close opponent - higher speed
+        moveForward(SPEED_FAST, SPEED_FAST);
+      } else {
+        // Distant opponent - moderate speed
+        moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+      }
+    } else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD) {
+      // Opponent is to the left - turn left then move
+      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+      // Only move forward if opponent is close enough
+      if (leftDist < IR_CLOSE_THRESHOLD) {
+        moveForward(SPEED_MEDIUM, SPEED_FAST);
+      }
+    } else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD) {
+      // Opponent is to the right - turn right then move
+      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+      // Only move forward if opponent is close enough
+      if (rightDist < IR_CLOSE_THRESHOLD) {
+        moveForward(SPEED_FAST, SPEED_MEDIUM);
+      }
     }
   } else {
-    // No opponent detected, perform in-place rotation search
+    // No opponent detected - ONLY rotate in place to search, no forward movement
     isOpponentVisible = false;
     attackMode = 0;
-    if (scanDirection == 1) {
-      turnRight(SPEED_SLOW, SPEED_SLOW);
-    } else {
-      turnLeft(SPEED_SLOW, SPEED_SLOW);
-    }
+    searchOpponent(); // This now only performs rotation without forward movement
   }
 }
 
-// Adjust direction to keep facing the opponent
+// Adjust direction to keep facing the opponent - more conservative approach
 void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist) {
   // Check if we need to perform a major direction adjustment
   if (backDist > 0 && backDist < 30 && 
       (leftDist >= IR_DETECTION_THRESHOLD && 
        centerDist >= IR_DETECTION_THRESHOLD && 
        rightDist >= IR_DETECTION_THRESHOLD)) {
-    // Opponent is behind us, turn around quickly
+    // Opponent is behind us, turn around quickly but don't move forward
     if (scanDirection == 1) {
       turnRight(SPEED_FAST, SPEED_FAST);
     } else {
@@ -316,6 +331,17 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
     }
   }
   
+  // Only move if we have a clear detection of the opponent
+  bool clearDetection = (centerDist < IR_DETECTION_THRESHOLD || 
+                         leftDist < IR_DETECTION_THRESHOLD || 
+                         rightDist < IR_DETECTION_THRESHOLD);
+                         
+  if (!clearDetection) {
+    // No clear detection, just rotate in place to search
+    searchOpponent();
+    return;
+  }
+  
   // Opponent is in front - fine-tune direction
   if (centerDist < IR_DETECTION_THRESHOLD) {
     // Opponent directly ahead - move forward
@@ -329,38 +355,43 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
     preferredDirection = 0;
   } 
   else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD && leftRightDiff > IR_TOLERANCE) {
-    // Opponent is to the left AND difference is significant (> tolerance) - adjust left while moving forward
+    // Opponent is to the left AND difference is significant (> tolerance)
     if (leftDist < IR_CLOSE_THRESHOLD) {
-      // Close opponent - sharper turn
+      // Close opponent - turn and move
       moveForward(SPEED_SLOW, SPEED_FAST);
     } else {
-      // Distant opponent - gentle turn
-      moveForward(SPEED_MEDIUM, SPEED_FAST);
+      // Distant opponent - just turn, don't move forward yet
+      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
     }
     preferredDirection = -1;
   } 
   else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD && leftRightDiff < -IR_TOLERANCE) {
-    // Opponent is to the right AND difference is significant (> tolerance) - adjust right while moving forward
+    // Opponent is to the right AND difference is significant (> tolerance)
     if (rightDist < IR_CLOSE_THRESHOLD) {
-      // Close opponent - sharper turn
+      // Close opponent - turn and move
       moveForward(SPEED_FAST, SPEED_SLOW);
     } else {
-      // Distant opponent - gentle turn
-      moveForward(SPEED_FAST, SPEED_MEDIUM);
+      // Distant opponent - just turn, don't move forward yet
+      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
     }
     preferredDirection = 1;
   }
   else if (leftDist < IR_DETECTION_THRESHOLD || rightDist < IR_DETECTION_THRESHOLD) {
-    // Opponent is detected but difference is within tolerance - move forward without turning
+    // Opponent is detected but difference is within tolerance
     if (min(leftDist, rightDist) < IR_CLOSE_THRESHOLD) {
+      // Only move forward if opponent is close
       moveForward(SPEED_FAST, SPEED_FAST);
     } else {
-      moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+      // Otherwise just turn to face opponent better
+      if (leftDist < rightDist) {
+        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+      } else {
+        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+      }
     }
   }
   else {
-    // No clear reading but we know opponent is somewhere
-    // Continue in the preferred direction if we have one
+    // No clear reading but we have a preferred direction
     if (preferredDirection < 0) {
       turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
     } else if (preferredDirection > 0) {
@@ -468,43 +499,27 @@ void updateSensorStates() {
                     (digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
 }
 
-// Improved search pattern to find opponent
+// Improved search pattern to find opponent - ONLY rotation, no forward movement
 void searchOpponent() {
   // Use oscillating pattern for searching - change direction regularly
   unsigned long currentTime = millis();
   
-  // Change scan direction every 2.5 seconds to cover more area
-  if (currentTime - lastScanTime > 2500) {
+  // Change scan direction every 3 seconds to cover more area
+  if (currentTime - lastScanTime > 3000) {
     scanDirection = -scanDirection;
     lastScanTime = currentTime;
     
-    // Every other direction change, move forward a bit to explore
-    static bool moveForwardFlag = false;
-    if (moveForwardFlag) {
-      // Move forward briefly to explore different areas of the ring
-      moveForward(SPEED_SLOW, SPEED_SLOW);
-      delay(500); // Short forward movement
-    }
-    moveForwardFlag = !moveForwardFlag;
+    // No forward movement during search to avoid falling off edge
   }
   
-  // Implement a combination of turning and moving forward for more area coverage
-  if (currentTime % 5000 < 3500) {
-    // Spin to scan
-    if (scanDirection == 1) {
-      // Clockwise spin
-      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
-    } else {
-      // Counter-clockwise spin
-      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
-    }
+  // Only perform in-place rotation for searching
+  // This prevents the robot from moving blindly and falling off the edge
+  if (scanDirection == 1) {
+    // Clockwise spin
+    turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
   } else {
-    // Move forward in arc (slight turn while moving)
-    if (scanDirection == 1) {
-      moveForward(SPEED_MEDIUM, SPEED_SLOW);
-    } else {
-      moveForward(SPEED_SLOW, SPEED_MEDIUM);
-    }
+    // Counter-clockwise spin
+    turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
   }
 }
 
