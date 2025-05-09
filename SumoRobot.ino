@@ -1,15 +1,5 @@
 #include <Arduino.h>
-
-// BTS7960 Motor control pins
-// Motor 1 (Left)
-#define M1_RPWM 11  // Right/Forward PWM pin - connect to RPWM on BTS7960
-#define M1_LPWM 10  // Left/Backward PWM pin - connect to LPWM on BTS7960
-// EN pins are connected to 5V directly
-
-// Motor 2 (Right)
-#define M2_RPWM 6   // Right/Forward PWM pin - connect to RPWM on BTS7960
-#define M2_LPWM 5   // Left/Backward PWM pin - connect to LPWM on BTS7960
-// EN pins are connected to 5V directly
+#include "Movement.h"
 
 // Starter switch: Digital input
 #define JSUMO_SWITCH 7
@@ -77,11 +67,6 @@ const unsigned long DEBOUNCE_TIME = 50; // Debounce time in milliseconds
 bool robotActive = false; // Flag to track if the robot is active
 
 // Function declarations
-void moveForward(int leftSpeed, int rightSpeed);
-void moveBackward(int leftSpeed, int rightSpeed);
-void turnLeft(int leftSpeed, int rightSpeed);
-void turnRight(int leftSpeed, int rightSpeed);
-void stopMovement();
 int getIRDistance(int sensorPin);
 long getUltrasonicDistance();
 void updateSensorStates();
@@ -296,31 +281,8 @@ void executeStrategy() {
     lastOpponentDetection = millis();
     attackMode = 1;
     
-    // Adjust direction and move toward opponent
-    if (centerDist < IR_DETECTION_THRESHOLD) {
-      // Opponent directly ahead - move forward
-      if (centerDist < IR_CLOSE_THRESHOLD) {
-        // Close opponent - higher speed
-        moveForward(SPEED_FAST, SPEED_FAST);
-      } else {
-        // Distant opponent - moderate speed
-        moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
-      }
-    } else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD) {
-      // Opponent is to the left - turn left then move
-      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
-      // Only move forward if opponent is close enough
-      if (leftDist < IR_CLOSE_THRESHOLD) {
-        moveForward(SPEED_MEDIUM, SPEED_FAST);
-      }
-    } else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD) {
-      // Opponent is to the right - turn right then move
-      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
-      // Only move forward if opponent is close enough
-      if (rightDist < IR_CLOSE_THRESHOLD) {
-        moveForward(SPEED_FAST, SPEED_MEDIUM);
-      }
-    }
+    // Call attackOpponent to handle the attack logic
+    attackOpponent(leftDist, centerDist, rightDist);
   } else {
     // No opponent detected - ONLY rotate in place to search, no forward movement
     isOpponentVisible = false;
@@ -437,52 +399,7 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
   }
 }
 
-// Movement Functions for BTS7960 - MODIFIED for parallel motors
-void moveForward(int leftSpeed, int rightSpeed) {
-  // Left motor forward (one direction)
-  analogWrite(M1_RPWM, leftSpeed);
-  analogWrite(M1_LPWM, 0);
-  
-  // Right motor forward (opposite direction due to parallel setup)
-  analogWrite(M2_LPWM, rightSpeed);
-  analogWrite(M2_RPWM, 0);
-}
 
-void moveBackward(int leftSpeed, int rightSpeed) {
-  // Left motor backward
-  analogWrite(M1_LPWM, leftSpeed);
-  analogWrite(M1_RPWM, 0);
-  
-  // Right motor backward (opposite direction due to parallel setup)
-  analogWrite(M2_RPWM, rightSpeed);
-  analogWrite(M2_LPWM, 0);
-}
-
-void turnLeft(int leftSpeed, int rightSpeed) {
-  // Left motor backward, Right motor backward
-  analogWrite(M1_LPWM, leftSpeed);
-  analogWrite(M1_RPWM, 0);
-  
-  analogWrite(M2_RPWM, rightSpeed);
-  analogWrite(M2_LPWM, 0);
-}
-
-void turnRight(int leftSpeed, int rightSpeed) {
-  // Left motor forward, Right motor forward
-  analogWrite(M1_RPWM, leftSpeed);
-  analogWrite(M1_LPWM, 0);
-  
-  analogWrite(M2_LPWM, rightSpeed);
-  analogWrite(M2_RPWM, 0);
-}
-
-void stopMovement() {
-  // Stop all motors
-  analogWrite(M1_RPWM, 0);
-  analogWrite(M1_LPWM, 0);
-  analogWrite(M2_RPWM, 0);
-  analogWrite(M2_LPWM, 0);
-}
 
 // IR Distance conversion (adjust based on your specific sensor model)
 int getIRDistance(int sensorPin) {
