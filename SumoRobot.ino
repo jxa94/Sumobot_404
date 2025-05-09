@@ -28,7 +28,8 @@
 #define ULTRASONIC_ECHO A4
 
 // Constants
-const int SPEED_SLOW = 40;    // Slow search speed
+const int SPEED_SLOW = 25;    // Slow search speed
+const int SPEED_SEARCH = 15;  // Very slow rotation speed for searching
 const int SPEED_MEDIUM = 80; // Medium attack speed
 const int SPEED_FAST = 120;   // Fast attack speed
 const int SPEED_MAX = 200;    // Maximum speed for direct contact
@@ -93,7 +94,7 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
 
 unsigned long lastSearchActionTime = 0;
 int searchPhase = 0; // 0: initial rotation, 1: pause, 2: sweep
-const unsigned long SEARCH_PHASE_DURATION = 500; // ms for each search phase
+const unsigned long SEARCH_PHASE_DURATION = 800; // ms for each search phase - 增加持续时间使旋转更稳定
 
 void setup() {
   // Serial communication can now be enabled since we're not using RX/TX pins
@@ -552,9 +553,9 @@ void searchOpponent() {
   switch (searchPhase) {
     case 0: // Initial wider rotation
       if (scanDirection == 1) {
-        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+        turnRight(SPEED_SLOW, SPEED_SLOW); // 减慢初始旋转速度
       } else {
-        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+        turnLeft(SPEED_SLOW, SPEED_SLOW); // 减慢初始旋转速度
       }
       break;
     case 1: // Pause and re-evaluate
@@ -563,9 +564,9 @@ void searchOpponent() {
       break;
     case 2: // Smaller, faster sweep or different speed rotation
       if (scanDirection == 1) {
-        turnRight(SPEED_SLOW, SPEED_SLOW); // Slower, more precise scan
+        turnRight(SPEED_SEARCH, SPEED_SEARCH); // 使用更慢的搜索速度进行精确扫描
       } else {
-        turnLeft(SPEED_SLOW, SPEED_SLOW);  // Slower, more precise scan
+        turnLeft(SPEED_SEARCH, SPEED_SEARCH);  // 使用更慢的搜索速度进行精确扫描
       }
       // Or, alternate direction for a sweep:
       // if (millis() % (SEARCH_PHASE_DURATION * 2) < SEARCH_PHASE_DURATION) turnLeft(SPEED_SLOW, SPEED_SLOW);
@@ -626,22 +627,5 @@ void attackOpponent(int leftDist, int centerDist, int rightDist) {
     // This case should ideally be handled by executeStrategy before calling attackOpponent
     // If called, it implies some level of detection, so a cautious move or re-scan
     searchOpponent(); // Revert to search if unsure
-  }
-}
-
-// Function to check bump sensors
-void attackOpponent(int leftDist, int centerDist, int rightDist) {
-  // If both bump sensors are triggered, go full power
-  if ((bumpSensorState & ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) == 
-      ((1 << BUMP_LEFT_BIT) | (1 << BUMP_RIGHT_BIT))) {
-    moveForward(SPEED_MAX, SPEED_MAX); // Maximum speed
-  }
-  // If left bump sensor is triggered, push harder on left side
-  else if (bumpSensorState & (1 << BUMP_LEFT_BIT)) {
-    moveForward(SPEED_MAX, SPEED_FAST);
-  }
-  // If right bump sensor is triggered, push harder on right side
-  else if (bumpSensorState & (1 << BUMP_RIGHT_BIT)) {
-    moveForward(SPEED_FAST, SPEED_MAX);
   }
 }
