@@ -1,21 +1,15 @@
 #include <Arduino.h>
-#include "Movement.h"
+#include "Basic.h"
 
 // Starter switch: Digital input
 #define JSUMO_SWITCH 7
 
-// Bump sensors - moved from RX/TX pins
-#define BUMP_LEFT 8   // connect to 8
-#define BUMP_RIGHT 9  // connect to 9
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
 #define IR_REFLECT_CENTER A1
 #define IR_REFLECT_RIGHT A2
 
-// Ultrasonic sensor: Analog input
-#define ULTRASONIC_TRIG A3
-#define ULTRASONIC_ECHO A4
 
 // Constants
 const int SPEED_SLOW = 25;    // Slow search speed
@@ -36,16 +30,23 @@ const int IR_CLOSE_THRESHOLD = 40;       // cm - opponent is very close
 const int IR_TOLERANCE = 10;             // Percentage tolerance for sensor readings to avoid small adjustments
 const int NUM_IR_READINGS = 5;         // Number of readings to average for IR sensors
 const int MIN_CONSECUTIVE_DETECTIONS = 3; // Minimum consecutive detections to confirm opponent
-const int MIN_SENSORS_FOR_CONFIRMATION = 2; // Minimum sensors agreeing for confirmation
 
 // Global variables
+
+// Define robot states
+enum RobotState {
+  SEARCHING,
+  ADJUSTING,
+  ATTACKING
+};
+RobotState currentState = SEARCHING; // Initial state
 unsigned long startTime = 0;
 bool isInitialScanComplete = false;
 unsigned long lastScanTime = 0;
 unsigned long lastAdjustmentTime = 0;    // For continuous direction adjustment
 int scanDirection = 1; // 1 for clockwise, -1 for counter-clockwise
 int bumpSensorState = 0;
-int attackMode = 0; // 0: searching, 1: attacking front, 2: attacking from side
+// int attackMode = 0; // 0: searching, 1: attacking front, 2: attacking from side // Replaced by currentState
 int consecutiveDetections = 0; // Counter for consecutive opponent detections
 
 // Continuous scanning variables
@@ -72,9 +73,6 @@ const unsigned long DEBOUNCE_TIME = 50; // Debounce time in milliseconds
 bool robotActive = false; // Flag to track if the robot is active
 
 // Function declarations
-int getIRDistance(int sensorPin);
-long getUltrasonicDistance();
-void updateSensorStates();
 void searchOpponent();
 void attackOpponent(int leftDist, int centerDist, int rightDist);
 void performInitialScan();
@@ -152,6 +150,28 @@ void loop() {
     // Update sensor readings
     updateSensorStates();
     
+    // Update sensor readings before executing strategy
+    leftDist = getIRDistance(IR_REFLECT_LEFT);
+    centerDist = getIRDistance(IR_REFLECT_CENTER);
+    rightDist = getIRDistance(IR_REFLECT_RIGHT);
+    backDist = getUltrasonicDistance();
+
+    // Display IR sensor data for debugging
+    Serial.println(F("-- IR Sensors --"));
+    Serial.print(F("\tLeft Distance=")); Serial.print(leftDist); Serial.println(F(" cm"));
+    Serial.print(F("\tCenter Distance=")); Serial.print(centerDist); Serial.println(F(" cm"));
+    Serial.print(F("\tRight Distance=")); Serial.print(rightDist); Serial.println(F(" cm"));
+
+    // Display ultrasonic sensor data for debugging
+    Serial.println(F("\n-- Ultrasonic Sensor --"));
+    Serial.print(F("Back Distance: "));
+    if (backDist < 0) {
+      Serial.println(F("No signal received"));
+    } else {
+      Serial.print(backDist);
+      Serial.println(F(" cm"));
+    }
+
     // Execute strategy based on sensors and continuous scanning
     executeStrategy();
   } else {
@@ -160,30 +180,8 @@ void loop() {
     isInitialScanComplete = false;
     startTime = 0;
   }
-  leftDist = getIRDistance(IR_REFLECT_LEFT);
-  centerDist = getIRDistance(IR_REFLECT_CENTER);
-  rightDist = getIRDistance(IR_REFLECT_RIGHT);
-  backDist = getUltrasonicDistance();
-  Serial.println(F("-- IR Sensors --"));
-  Serial.print(F("\tDistance=")); Serial.print(leftDist);
-  Serial.println(F(" cm"));
-  
-  Serial.print(F("\tDistance=")); Serial.print(centerDist);
-  Serial.println(F(" cm"));
-  
-  Serial.print(F("\tDistance=")); Serial.print(rightDist);
-  Serial.println(F(" cm"));
-  
-  // Display ultrasonic sensor data
-  Serial.println(F("\n-- Ultrasonic Sensor --"));
-  Serial.print(F("Distance: "));
-  if (backDist < 0) {
-    Serial.println(F("No signal received"));
-  } else {
-    Serial.print(backDist);
-    Serial.println(F(" cm"));
-  }
-  delay(1000);
+  // Sensor readings and Serial prints moved up
+  delay(1000); // Keep delay if it's for overall loop timing, otherwise consider moving or removing
 }
 
 // Handle JSUMO switch state changes with debouncing
@@ -261,168 +259,183 @@ void performInitialScan() {
 }
 
 // Execute strategy based on sensors and continuous scanning
+// executeStrategy: Main decision-making function for robot behavior.
 void executeStrategy() {
-  // Read current sensor data
-  int leftDist = getIRDistance(IR_REFLECT_LEFT);
-  int centerDist = getIRDistance(IR_REFLECT_CENTER);
-  int rightDist = getIRDistance(IR_REFLECT_RIGHT);
-  long backDist = getUltrasonicDistance();
-  
-  // Update last distances for tracking
-  lastLeftDist = leftDist;
-  lastCenterDist = centerDist;
-  lastRightDist = rightDist;
-  lastBackDist = backDist;
-  
-  // First check bump sensors as they indicate direct contact
-  if (bumpSensorState > 0) {
-    attackMode = 1;
-    consecutiveDetections = MIN_CONSECUTIVE_DETECTIONS; // Reset confidence on bump
-    attackOpponent(leftDist, centerDist, rightDist);
-    return;
-  }
-  
-  // Check if opponent is detected - use more conservative thresholds
-  // to ensure we only move when we're confident about opponent detection
-  bool basicDetection = (centerDist < IR_DETECTION_THRESHOLD || 
-                         leftDist < IR_DETECTION_THRESHOLD || 
-                         rightDist < IR_DETECTION_THRESHOLD ||
-                         (backDist > 0 && backDist < 30));
+  // Sensor data (leftDist, centerDist, rightDist, backDist, bumpSensorState) is updated in loop() before this.
 
-  int agreeingSensors = 0;
-  if (centerDist < IR_DETECTION_THRESHOLD) agreeingSensors++;
-  if (leftDist < IR_DETECTION_THRESHOLD) agreeingSensors++;
-  if (rightDist < IR_DETECTION_THRESHOLD) agreeingSensors++;
-  if (backDist > 0 && backDist < 30) agreeingSensors++; // Consider back sensor as well
-
-  if (basicDetection) {
-    consecutiveDetections++;
-  } else {
-    consecutiveDetections = 0;
-  }
-  
-  bool opponentConfirmed = (consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS) || 
-                           (basicDetection && agreeingSensors >= MIN_SENSORS_FOR_CONFIRMATION);
-  
-  if (opponentConfirmed) {
-    // Opponent detected - now we can move
-    isOpponentVisible = true;
-    lastOpponentDetection = millis();
-    attackMode = 1;
-    
-    // Call attackOpponent to handle the attack logic
-    attackOpponent(leftDist, centerDist, rightDist);
-  } else {
-    // No opponent detected - ONLY rotate in place to search, no forward movement
-    isOpponentVisible = false;
-    attackMode = 0;
-    searchOpponent(); // This now only performs rotation without forward movement
-  }
-}
-
-// Adjust direction to keep facing the opponent - more conservative approach
-void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist) {
-  // Check if we need to perform a major direction adjustment
-  if (backDist > 0 && backDist < 30 && 
-      (leftDist >= IR_DETECTION_THRESHOLD && 
-       centerDist >= IR_DETECTION_THRESHOLD && 
-       rightDist >= IR_DETECTION_THRESHOLD)) {
-    // Opponent is behind us, turn around quickly but don't move forward
-    if (scanDirection == 1) {
-      turnRight(SPEED_FAST, SPEED_FAST);
-    } else {
-      turnLeft(SPEED_FAST, SPEED_FAST);
-    }
-    consecutiveDetections = 0; // Reset detection count after a major turn
-    return;
-  }
-  
-  // Calculate difference percentages to implement tolerance
-  int leftRightDiff = 0;
-  if (leftDist < IR_DETECTION_THRESHOLD && rightDist < IR_DETECTION_THRESHOLD) {
-    // Calculate percentage difference between left and right sensors
-    if (leftDist <= rightDist) {
-      leftRightDiff = ((rightDist - leftDist) * 100) / rightDist;
-    } else {
-      leftRightDiff = -((leftDist - rightDist) * 100) / leftDist;
-    }
-  }
-  
-  // Only move if we have a clear detection of the opponent
+  // 1. Update Opponent Detection Status (critical for state transitions)
   bool basicClearDetection = (centerDist < IR_DETECTION_THRESHOLD || 
                               leftDist < IR_DETECTION_THRESHOLD || 
                               rightDist < IR_DETECTION_THRESHOLD);
 
-  int agreeingFrontSensors = 0;
-  if (centerDist < IR_DETECTION_THRESHOLD) agreeingFrontSensors++;
-  if (leftDist < IR_DETECTION_THRESHOLD) agreeingFrontSensors++;
-  if (rightDist < IR_DETECTION_THRESHOLD) agreeingFrontSensors++;
+  if (basicClearDetection) {
+    if (!isOpponentVisible) {
+        consecutiveDetections = 0; // Reset if just became visible
+    }
+    consecutiveDetections++;
+    lastOpponentDetection = millis();
+    isOpponentVisible = true;
+  } else {
+    consecutiveDetections = 0; // Reset if no basic detection
+    if (isOpponentVisible && (millis() - lastOpponentDetection > 1500)) { // Timeout for losing sight
+      isOpponentVisible = false;
+      preferredDirection = 0; 
+      // If opponent is lost, the current state's logic will handle transition, typically to SEARCHING.
+    }
+  }
+  bool confirmedClearDetection = (isOpponentVisible && consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS);
 
-  bool confirmedClearDetection = (consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS && basicClearDetection) ||
-                                 (basicClearDetection && agreeingFrontSensors >= MIN_SENSORS_FOR_CONFIRMATION);
-                         
-  if (!confirmedClearDetection) {
-    // No clear detection, just rotate in place to search
-    searchOpponent();
+  // 2. Handle Bump Sensor Activation (Highest Priority for state transition)
+  if (bumpSensorState > 0) {
+    currentState = ATTACKING; // Force ATTACKING state on bump
+    // attackOpponent will be called within the ATTACKING state's logic
+  }
+
+  // 3. State Machine Logic
+  switch (currentState) {
+    case SEARCHING:
+      Serial.println(F("State: SEARCHING"));
+      if (confirmedClearDetection) {
+        currentState = ADJUSTING; // Opponent found, switch to adjusting. adjustDirectionToOpponent will be called in ADJUSTING.
+      } else {
+        searchOpponent(); // Perform search action
+      }
+      break;
+
+    case ADJUSTING:
+      Serial.println(F("State: ADJUSTING"));
+      if (!isOpponentVisible) { // Lost opponent completely
+          currentState = SEARCHING; // Transition to SEARCHING. searchOpponent will be called there.
+          break; 
+      }
+      
+      if (confirmedClearDetection) {
+        adjustDirectionToOpponent(leftDist, centerDist, rightDist, backDist); // Perform adjustment
+        // Check if ready to attack: opponent is centered (preferredDirection == 0 from adjust) AND close
+        if (preferredDirection == 0 && centerDist < IR_DETECTION_THRESHOLD) { 
+          currentState = ATTACKING; // Transition to ATTACKING. attackOpponent will be called there.
+        }
+        // If still needs adjustment, stay in ADJUSTING state. adjustDirectionToOpponent handles the action.
+      } else {
+        // Opponent not confirmed (e.g., lost sight briefly, or not enough consecutive detections)
+        currentState = SEARCHING; // Go back to searching
+      }
+      break;
+
+    case ATTACKING:
+      Serial.println(F("State: ATTACKING"));
+      // If opponent is lost (and not bumped), transition to SEARCHING
+      if (!isOpponentVisible && bumpSensorState == 0) { 
+          currentState = SEARCHING; // Transition to SEARCHING. searchOpponent will be called there.
+          break;
+      }
+
+      // If bumped, or if opponent is confirmed, centered, and close, then attack.
+      if (bumpSensorState > 0 || (confirmedClearDetection && preferredDirection == 0 && centerDist < IR_DETECTION_THRESHOLD)) {
+        attackOpponent(leftDist, centerDist, rightDist); // Perform attack action
+        
+        // If bump is over AND conditions for attack are no longer met, transition to ADJUSTING.
+        // Otherwise, stay in ATTACKING (e.g. continuous bump, or still centered and close).
+        if (bumpSensorState == 0 && !(confirmedClearDetection && preferredDirection == 0 && centerDist < IR_DETECTION_THRESHOLD)) {
+            currentState = ADJUSTING; // Need to re-evaluate/re-adjust
+        }
+      } else {
+        // Conditions for attack not met (e.g., opponent moved, not centered, not confirmed)
+        currentState = ADJUSTING; // Go back to adjusting
+      }
+      break;
+  }
+}
+
+// Adjust direction to keep facing the opponent - more conservative approach
+// Adjust direction to keep facing the opponent - ONLY rotation
+void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist) {
+  // Check if we need to perform a major direction adjustment (opponent is behind)
+  if (backDist > 0 && backDist < 30 && 
+      (leftDist >= IR_DETECTION_THRESHOLD && 
+       centerDist >= IR_DETECTION_THRESHOLD && 
+       rightDist >= IR_DETECTION_THRESHOLD)) {
+    // Opponent is behind us, turn around quickly
+    if (scanDirection == 1) { // Current scan direction might influence initial turn
+      turnRight(SPEED_FAST, SPEED_FAST); 
+    } else {
+      turnLeft(SPEED_FAST, SPEED_FAST);
+    }
+    consecutiveDetections = 0; // Reset detection count after a major turn
+    preferredDirection = (scanDirection == 1) ? 1 : -1; // Set preferred direction based on turn
     return;
   }
   
-  // Opponent is in front - fine-tune direction
-  if (centerDist < IR_DETECTION_THRESHOLD && confirmedClearDetection) {
-    // Opponent directly ahead - move forward
-    if (centerDist < IR_CLOSE_THRESHOLD) {
-      // Close opponent - higher speed
-      moveForward(SPEED_FAST, SPEED_FAST);
-    } else {
-      // Distant opponent - moderate speed
-      moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+  // Calculate difference percentages to implement tolerance for front IR sensors
+  int leftRightDiffPercent = 0;
+  if (leftDist < IR_DETECTION_THRESHOLD && rightDist < IR_DETECTION_THRESHOLD) {
+    if (leftDist <= rightDist && rightDist > 0) { // Avoid division by zero
+      leftRightDiffPercent = ((rightDist - leftDist) * 100) / rightDist;
+    } else if (leftDist > 0) { // Avoid division by zero
+      leftRightDiffPercent = -((leftDist - rightDist) * 100) / leftDist;
     }
+  }
+  
+  bool basicClearDetection = (centerDist < IR_DETECTION_THRESHOLD || 
+                              leftDist < IR_DETECTION_THRESHOLD || 
+                              rightDist < IR_DETECTION_THRESHOLD);
+  bool confirmedClearDetection = (consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS && basicClearDetection);
+                         
+  if (!confirmedClearDetection) {
+    // No confirmed opponent, rely on preferredDirection or search
+    if (preferredDirection < 0) {
+      turnLeft(SPEED_SEARCH, SPEED_SEARCH); // Slower turn if just following preferred direction
+    } else if (preferredDirection > 0) {
+      turnRight(SPEED_SEARCH, SPEED_SEARCH);
+    } else {
+      searchOpponent(); // Default to search if no preferred direction and no confirmation
+    }
+    return;
+  }
+  
+  // Opponent is confirmed in front - fine-tune direction
+  if (centerDist < IR_DETECTION_THRESHOLD) {
+    // Opponent directly ahead or nearly ahead
+    stopMovement(); // Stop turning if opponent is centered
     preferredDirection = 0;
   } 
-  else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD && leftRightDiff > IR_TOLERANCE && confirmedClearDetection) {
-    // Opponent is to the left AND difference is significant (> tolerance)
-    if (leftDist < IR_CLOSE_THRESHOLD) {
-      // Close opponent - turn and move
-      moveForward(SPEED_SLOW, SPEED_FAST);
+  else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD) {
+    // Opponent is more to the left
+    if (abs(leftRightDiffPercent) > IR_TOLERANCE) { // Only turn if difference is significant
+        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
     } else {
-      // Distant opponent - just turn, don't move forward yet
-      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+        stopMovement(); // Within tolerance, stop turning
     }
     preferredDirection = -1;
   } 
-  else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD && leftRightDiff < -IR_TOLERANCE && confirmedClearDetection) {
-    // Opponent is to the right AND difference is significant (> tolerance)
-    if (rightDist < IR_CLOSE_THRESHOLD) {
-      // Close opponent - turn and move
-      moveForward(SPEED_FAST, SPEED_SLOW);
+  else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD) {
+    // Opponent is more to the right
+    if (abs(leftRightDiffPercent) > IR_TOLERANCE) { // Only turn if difference is significant
+        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
     } else {
-      // Distant opponent - just turn, don't move forward yet
-      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+        stopMovement(); // Within tolerance, stop turning
     }
     preferredDirection = 1;
   }
-  else if ((leftDist < IR_DETECTION_THRESHOLD || rightDist < IR_DETECTION_THRESHOLD) && confirmedClearDetection) {
-    // Opponent is detected but difference is within tolerance
-    if (min(leftDist, rightDist) < IR_CLOSE_THRESHOLD) {
-      // Only move forward if opponent is close
-      moveForward(SPEED_FAST, SPEED_FAST);
-    } else {
-      // Otherwise just turn to face opponent better
-      if (leftDist < rightDist) {
-        turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
-      } else {
-        turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
-      }
-    }
-  }
-  else {
-    // No clear reading but we have a preferred direction
+  // If opponent detected by one side sensor but not clearly left/right (e.g. one sensor maxed out)
+  // or if within tolerance but not centered, continue with preferred direction or search.
+  else if (basicClearDetection) { // Some detection, but not fitting above categories
     if (preferredDirection < 0) {
-      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
+      turnLeft(SPEED_SEARCH, SPEED_SEARCH);
     } else if (preferredDirection > 0) {
-      turnRight(SPEED_MEDIUM, SPEED_MEDIUM);
+      turnRight(SPEED_SEARCH, SPEED_SEARCH);
     } else {
-      // If no preferred direction, revert to search
+      // Fallback to a gentle turn if centered but not perfectly, or search if lost
+      if (leftDist < rightDist) turnLeft(SPEED_SEARCH, SPEED_SEARCH);
+      else turnRight(SPEED_SEARCH, SPEED_SEARCH);
+    }
+  } else {
+    // Lost confirmed detection, rely on preferred direction or search
+    if (preferredDirection < 0) {
+      turnLeft(SPEED_SEARCH, SPEED_SEARCH);
+    } else if (preferredDirection > 0) {
+      turnRight(SPEED_SEARCH, SPEED_SEARCH);
+    } else {
       searchOpponent();
     }
   }
@@ -430,150 +443,87 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
 
 
 
-// IR Distance conversion (adjust based on your specific sensor model)
-int getIRDistance(int sensorPin) {
-  long totalReading = 0;
-  for (int i = 0; i < NUM_IR_READINGS; i++) {
-    totalReading += analogRead(sensorPin);
-    delay(1); // Small delay between readings
-  }
-  int reading = totalReading / NUM_IR_READINGS;
-  
-  // Convert analog reading (0-1023) to voltage (0-5V)
-  float voltage = reading * (5.0 / 1023.0);
-  
-  // Check if voltage is too low (beyond maximum distance)
-  if (voltage < 0.5) return IR_MAX_DISTANCE;
-  
-  // Convert voltage to distance using the inverse relationship
-  // The formula is derived from the second graph showing 1/distance vs voltage
-  float inverse_distance = (voltage - 0.42) / 42.5;
-  float distance = 1.0 / inverse_distance;
-  
-  // Apply limits
-  if (distance > IR_MAX_DISTANCE) return IR_MAX_DISTANCE;
-  if (distance < IR_MIN_DISTANCE) return IR_MIN_DISTANCE;
-  
-  return (int)distance;
-}
-
-// Ultrasonic Distance measurement
-long getUltrasonicDistance() {
-  // Clear the trigger pin
-  digitalWrite(ULTRASONIC_TRIG, LOW);
-  delayMicroseconds(2);
-  
-  // Set the trigger pin high for 10 microseconds
-  digitalWrite(ULTRASONIC_TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG, LOW);
-  
-  // Read the echo pin, return the sound wave travel time in microseconds
-  long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 30000); // Timeout after 30ms
-  
-  // Calculate distance in centimeters
-  long distance = duration * 0.034 / 2;
-  
-  return distance;
-}
-
-// Update sensor states
-void updateSensorStates() {
-  // Bump sensors
-  bumpSensorState = (digitalRead(BUMP_LEFT) << BUMP_LEFT_BIT) |
-                    (digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
-}
-
 // Improved search pattern to find opponent - ONLY rotation, no forward movement
+// searchOpponent: Rotates the robot to find the opponent. ONLY rotation.
 void searchOpponent() {
-  Serial.println(F("enter search mode"));
-  // Use oscillating pattern for searching - change direction regularly
+  Serial.println(F("enter search mode - rotating only"));
   unsigned long currentTime = millis();
-  
-  // Dynamic search strategy
+
+  // Dynamic search strategy: cycle through rotation, pause, different rotation
   if (currentTime - lastSearchActionTime > SEARCH_PHASE_DURATION) {
     lastSearchActionTime = currentTime;
-    searchPhase = (searchPhase + 1) % 3; // Cycle through 0, 1, 2
-    stopMovement(); // Stop before changing phase
+    searchPhase = (searchPhase + 1) % 3; // Cycle through 0 (rotate), 1 (pause), 2 (rotate different speed/dir)
+    if (searchPhase != 1) { // Don't stop if the next phase is a rotation
+        // No explicit stopMovement() here, as rotation commands will override previous ones.
+        // A brief stop can be added if jerky movements are an issue.
+    }
   }
 
   switch (searchPhase) {
-    case 0: // Initial wider rotation
+    case 0: // Wider/slower rotation
       if (scanDirection == 1) {
-        turnRight(SPEED_SLOW, SPEED_SLOW); // 减慢初始旋转速度
+        turnRight(SPEED_SEARCH, SPEED_SEARCH); // Use a consistent search speed
       } else {
-        turnLeft(SPEED_SLOW, SPEED_SLOW); // 减慢初始旋转速度
+        turnLeft(SPEED_SEARCH, SPEED_SEARCH);
       }
       break;
-    case 1: // Pause and re-evaluate
-      stopMovement();
-      // Potentially add a quick sensor re-read here if needed
+    case 1: // Pause and re-evaluate (sensors will be read in main loop)
+      stopMovement(); 
       break;
-    case 2: // Smaller, faster sweep or different speed rotation
+    case 2: // Potentially different speed or alternating sweep
+      // For now, same as phase 0, but could be faster or alternate direction
       if (scanDirection == 1) {
-        turnRight(SPEED_SEARCH, SPEED_SEARCH); // 使用更慢的搜索速度进行精确扫描
+        turnRight(SPEED_SLOW, SPEED_SLOW); // Slightly faster or different pattern
       } else {
-        turnLeft(SPEED_SEARCH, SPEED_SEARCH);  // 使用更慢的搜索速度进行精确扫描
+        turnLeft(SPEED_SLOW, SPEED_SLOW);
       }
-      // Or, alternate direction for a sweep:
-      // if (millis() % (SEARCH_PHASE_DURATION * 2) < SEARCH_PHASE_DURATION) turnLeft(SPEED_SLOW, SPEED_SLOW);
-      // else turnRight(SPEED_SLOW, SPEED_SLOW);
+      // Example of alternating sweep (could be a more complex pattern):
+      // if ((currentTime / SEARCH_PHASE_DURATION) % 2 == 0) turnLeft(SPEED_SEARCH, SPEED_SEARCH);
+      // else turnRight(SPEED_SEARCH, SPEED_SEARCH);
       break;
   }
   
-  // Occasionally switch scan direction to avoid getting stuck
-  if (random(100) < 5) { // 5% chance to switch direction
+  // Occasionally switch overall scan direction to avoid getting stuck in one rotational pattern
+  // This random change should be infrequent enough not to disrupt a good search pattern too often.
+  if (millis() - lastScanTime > 5000 && random(100) < 10) { // e.g., every 5 seconds, 10% chance
     scanDirection *= -1;
+    lastScanTime = millis(); // Reset timer after changing direction
+    searchPhase = 0; // Reset search phase to start new direction cleanly
+    Serial.print(F("Search direction switched to: ")); Serial.println(scanDirection);
   }
 }
 
 // Attack opponent based on sensor readings
+// attackOpponent: Assumes robot is generally facing the opponent.
+// Executes forward attack moves based on proximity and confidence.
 void attackOpponent(int leftDist, int centerDist, int rightDist) {
   Serial.println(F("enter attack mode"));
-  // Determine attack confidence (using existing consecutiveDetections as a proxy)
-  // More sophisticated confidence could be based on signal strength, multiple sensor agreement etc.
   bool highConfidence = (consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS);
 
-  // If bump sensors are active, always attack aggressively
+  // 1. Handle Bump Sensor Activation (Highest Priority)
   if (bumpSensorState > 0) {
     moveForward(SPEED_MAX, SPEED_MAX); // Full speed push
     delay(200); // Push for a short duration
-    // After pushing, could add a small retreat or turn to re-assess
-    // moveBackward(SPEED_MEDIUM, SPEED_MEDIUM);
-    // delay(100);
-    // turnLeft(SPEED_MEDIUM, SPEED_MEDIUM);
-    // delay(100);
+    // Consider adding a brief strategic reposition after bump in executeStrategy or here
     return;
   }
 
-  // Attack strategy based on opponent position and confidence
+  // 2. Attack if Opponent is Detected Centrally and Close Enough
+  // Relies on executeStrategy and adjustDirectionToOpponent to ensure the robot is mostly facing the opponent.
   if (centerDist < IR_DETECTION_THRESHOLD) {
-    // Opponent directly ahead
     if (highConfidence && centerDist < IR_CLOSE_THRESHOLD) {
-      moveForward(SPEED_FAST, SPEED_FAST); // High confidence, close: fast attack
-    } else if (centerDist < IR_CLOSE_THRESHOLD) {
-      moveForward(SPEED_MEDIUM, SPEED_MEDIUM); // Lower confidence, close: medium attack
-    } else {
-      moveForward(SPEED_MEDIUM, SPEED_MEDIUM); // Further away: medium approach
+      // High confidence and very close: aggressive forward attack
+      moveForward(SPEED_FAST, SPEED_FAST);
+    } else if (centerDist < IR_CLOSE_THRESHOLD) { // Opponent is close, but confidence might be lower or not "very close"
+      // Moderate forward attack/approach
+      moveForward(SPEED_MEDIUM, SPEED_MEDIUM);
+    } else { // Opponent detected ahead (centerDist < IR_DETECTION_THRESHOLD), but not very close (centerDist >= IR_CLOSE_THRESHOLD)
+      // Cautious forward approach
+      moveForward(SPEED_MEDIUM, SPEED_MEDIUM); // Or SPEED_SLOW depending on desired behavior
     }
-  } else if (leftDist < rightDist && leftDist < IR_DETECTION_THRESHOLD) {
-    // Opponent to the left
-    if (highConfidence && leftDist < IR_CLOSE_THRESHOLD) {
-      moveForward(SPEED_SLOW, SPEED_FAST); // High confidence, close: turn and push
-    } else {
-      turnLeft(SPEED_MEDIUM, SPEED_MEDIUM); // Lower confidence or further: just turn
-    }
-  } else if (rightDist < leftDist && rightDist < IR_DETECTION_THRESHOLD) {
-    // Opponent to the right
-    if (highConfidence && rightDist < IR_CLOSE_THRESHOLD) {
-      moveForward(SPEED_FAST, SPEED_SLOW); // High confidence, close: turn and push
-    } else {
-      turnRight(SPEED_MEDIUM, SPEED_MEDIUM); // Lower confidence or further: just turn
-    }
-  } else {
-    // Lost clear sight, or uncertain, revert to search or cautious approach
-    // This case should ideally be handled by executeStrategy before calling attackOpponent
-    // If called, it implies some level of detection, so a cautious move or re-scan
-    searchOpponent(); // Revert to search if unsure
   }
+  // If opponent is not clearly in the center and close enough for an attack by the conditions above,
+  // this function will do nothing. The overall strategy (decided in executeStrategy)
+  // will then determine the next action (e.g., adjust direction, search).
+  // Side sensor inputs (leftDist, rightDist) are not used for turning decisions here.
 }
