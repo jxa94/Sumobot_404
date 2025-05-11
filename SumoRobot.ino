@@ -129,7 +129,7 @@ void loop() {
   handleJsumoSwitch();
   
   // Only run robot logic if it's active
-  if (true) {
+  if (robotActive) {
     // Initial 3-second scan without moving
     if (!isInitialScanComplete) {
       if (startTime == 0) {
