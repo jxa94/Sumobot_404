@@ -457,6 +457,7 @@ void updateSensorStates() {
 
 // Improved search pattern to find opponent - ONLY rotation, no forward movement
 void searchOpponent() {
+  Serial.println(F("enter search mode"));
   // Use oscillating pattern for searching - change direction regularly
   unsigned long currentTime = millis();
   
@@ -499,6 +500,7 @@ void searchOpponent() {
 
 // Attack opponent based on sensor readings
 void attackOpponent(int leftDist, int centerDist, int rightDist) {
+  Serial.println(F("enter attack mode"));
   // Determine attack confidence (using existing consecutiveDetections as a proxy)
   // More sophisticated confidence could be based on signal strength, multiple sensor agreement etc.
   bool highConfidence = (consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS);
