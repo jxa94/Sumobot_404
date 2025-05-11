@@ -54,6 +54,11 @@ int lastCenterDist = IR_MAX_DISTANCE;
 int lastRightDist = IR_MAX_DISTANCE;
 long lastBackDist = 100;
 
+int leftDist = 0;
+int centerDist = 0;
+int rightDist = 0;
+long backDist = 0;
+
 // Direction and tracking
 int preferredDirection = 0;  // For maintaining pursuit direction
 unsigned long lastOpponentDetection = 0;
@@ -124,7 +129,7 @@ void loop() {
   handleJsumoSwitch();
   
   // Only run robot logic if it's active
-  if (robotActive) {
+  if (true) {
     // Initial 3-second scan without moving
     if (!isInitialScanComplete) {
       if (startTime == 0) {
@@ -155,6 +160,30 @@ void loop() {
     isInitialScanComplete = false;
     startTime = 0;
   }
+  leftDist = getIRDistance(IR_REFLECT_LEFT);
+  centerDist = getIRDistance(IR_REFLECT_CENTER);
+  rightDist = getIRDistance(IR_REFLECT_RIGHT);
+  backDist = getUltrasonicDistance();
+  Serial.println(F("-- IR Sensors --"));
+  Serial.print(F("\tDistance=")); Serial.print(leftDist);
+  Serial.println(F(" cm"));
+  
+  Serial.print(F("\tDistance=")); Serial.print(centerDist);
+  Serial.println(F(" cm"));
+  
+  Serial.print(F("\tDistance=")); Serial.print(rightDist);
+  Serial.println(F(" cm"));
+  
+  // Display ultrasonic sensor data
+  Serial.println(F("\n-- Ultrasonic Sensor --"));
+  Serial.print(F("Distance: "));
+  if (backDist < 0) {
+    Serial.println(F("No signal received"));
+  } else {
+    Serial.print(backDist);
+    Serial.println(F(" cm"));
+  }
+  delay(1000);
 }
 
 // Handle JSUMO switch state changes with debouncing
