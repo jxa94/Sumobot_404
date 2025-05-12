@@ -62,9 +62,9 @@ long getUltrasonicDistance() {
 
 // Update sensor states
 void updateSensorStates() {
-  // Bump sensors
-  bumpSensorState = (digitalRead(BUMP_LEFT) << BUMP_LEFT_BIT) |
-                    (digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
+  // Bump sensors (active LOW with pullup)
+  bumpSensorState = (!digitalRead(BUMP_LEFT) << BUMP_LEFT_BIT) |
+                    (!digitalRead(BUMP_RIGHT) << BUMP_RIGHT_BIT);
 }
 
 

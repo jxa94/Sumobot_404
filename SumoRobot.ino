@@ -108,8 +108,8 @@ void setup() {
   pinMode(ULTRASONIC_ECHO, INPUT);
 
   // Bump sensors
-  pinMode(BUMP_LEFT, INPUT);
-  pinMode(BUMP_RIGHT, INPUT);
+  pinMode(BUMP_LEFT, INPUT_PULLUP); // Use internal pull-up resistors
+  pinMode(BUMP_RIGHT, INPUT_PULLUP); // Use internal pull-up resistors
 
   // Starter switch
   pinMode(JSUMO_SWITCH, INPUT);
@@ -287,6 +287,9 @@ void executeStrategy() {
 
   // 2. Handle Bump Sensor Activation (Highest Priority for state transition)
   if (bumpSensorState > 0) {
+    if (currentState != ATTACKING) { // Print only on state change
+      Serial.println(F("ATTACKING: Bump sensor triggered!"));
+    }
     currentState = ATTACKING; // Force ATTACKING state on bump
     // attackOpponent will be called within the ATTACKING state's logic
   }
@@ -313,6 +316,10 @@ void executeStrategy() {
         adjustDirectionToOpponent(leftDist, centerDist, rightDist, backDist); // Perform adjustment
         // Check if ready to attack: opponent is centered (preferredDirection == 0 from adjust) AND close
         if (preferredDirection == 0 && centerDist < IR_DETECTION_THRESHOLD) { 
+          if (currentState != ATTACKING) { // Print only on state change
+            Serial.print(F("ATTACKING: Opponent centered and close. Center_IR_Dist: "));
+            Serial.println(centerDist);
+          }
           currentState = ATTACKING; // Transition to ATTACKING. attackOpponent will be called there.
         }
         // If still needs adjustment, stay in ADJUSTING state. adjustDirectionToOpponent handles the action.
