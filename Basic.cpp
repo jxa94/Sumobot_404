@@ -26,8 +26,8 @@ void turnLeft(int leftSpeed, int rightSpeed) {
   analogWrite(M1_LPWM, leftSpeed);
   analogWrite(M1_RPWM, 0);
   
-  analogWrite(M2_LPWM, rightSpeed);
-  analogWrite(M2_RPWM, 0);
+  analogWrite(M2_RPWM, rightSpeed);
+  analogWrite(M2_LPWM, 0);
 }
 
 void turnRight(int leftSpeed, int rightSpeed) {
@@ -35,8 +35,8 @@ void turnRight(int leftSpeed, int rightSpeed) {
   analogWrite(M1_RPWM, leftSpeed);
   analogWrite(M1_LPWM, 0);
   
-  analogWrite(M2_RPWM, rightSpeed);
-  analogWrite(M2_LPWM, 0);
+  analogWrite(M2_LPWM, rightSpeed);
+  analogWrite(M2_RPWM, 0);
 }
 
 void stopMovement() {

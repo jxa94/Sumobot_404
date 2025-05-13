@@ -181,7 +181,7 @@ void loop() {
     startTime = 0;
   }
   // Sensor readings and Serial prints moved up
-  delay(1000); // Keep delay if it's for overall loop timing, otherwise consider moving or removing
+  delay(50); // 减少延迟时间以提高响应速度，从1000ms降低到50ms
 }
 
 // Handle JSUMO switch state changes with debouncing
