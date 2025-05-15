@@ -1,22 +1,20 @@
 #include <Arduino.h>
 
 // BTS7960 Motor control pins
-// Motor 1 (Left)
-#define M1_RPWM 11  // Right/Forward PWM pin - connect to RPWM on BTS7960
-#define M1_LPWM 10  // Left/Backward PWM pin - connect to LPWM on BTS7960
-// EN pins are connected to 5V directly
+// Motor right
+#define M2_RPWM 10  // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M2_LPWM 11  // Left/Backward PWM pin - connect to LPWM on BTS7960
 
-// Motor 2 (Right)
-#define M2_RPWM 6   // Right/Forward PWM pin - connect to RPWM on BTS7960
-#define M2_LPWM 5   // Left/Backward PWM pin - connect to LPWM on BTS7960
-// EN pins are connected to 5V directly
+// Motor left
+#define M1_RPWM 5   // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M1_LPWM 6   // Left/Backward PWM pin - connect to LPWM on BTS7960
 
 // Starter switch: Digital input
-#define JSUMO_SWITCH 7
+#define JSUMO_SWITCH 2
 
 // Bump sensors - moved from RX/TX pins
-#define BUMP_LEFT 8   // connect to 8
-#define BUMP_RIGHT 9  // connect to 9
+#define BUMP_LEFT 12   // connect to 12
+#define BUMP_RIGHT 4  // connect to 4
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
@@ -64,12 +62,10 @@ int preferredDirection = 0;  // For maintaining pursuit direction
 unsigned long lastOpponentDetection = 0;
 bool isOpponentVisible = false;
 
-// JSUMO switch state tracking
-bool previousSwitchState = false;
-bool currentSwitchState = false;
-unsigned long lastSwitchChangeTime = 0;
-const unsigned long DEBOUNCE_TIME = 50; // Debounce time in milliseconds
-bool robotActive = false; // Flag to track if the robot is active
+// JSUMO switch variables (simplified from old driver)
+bool robotActive = false;
+unsigned long waitStartTime = 0;
+bool waitOnce = false;
 
 // Function declarations
 void moveForward(int leftSpeed, int rightSpeed);
@@ -117,85 +113,58 @@ void setup() {
   // Starter switch
   pinMode(JSUMO_SWITCH, INPUT);
   
-  // Initialize switch state
-  currentSwitchState = digitalRead(JSUMO_SWITCH);
-  previousSwitchState = currentSwitchState;
-  
   // Ensure motors are stopped
   stopMovement();
 }
 
 void loop() {
-  // Handle the JSUMO switch state changes
-  handleJsumoSwitch();
-  
-  // Only run robot logic if it's active
-  if (robotActive) {
-    // Initial 3-second scan without moving
-    if (!isInitialScanComplete) {
-      if (startTime == 0) {
-        startTime = millis();
-        // Reset opponent detection flags
-        isOpponentVisible = false;
-        preferredDirection = 0;
-      }
-      
-      // During the 3-second period, only perform scanning
-      if (millis() - startTime < 3000) {
-        stopMovement(); // Ensure we're not moving
-        performInitialScan(); // Only scan, don't move
-        return;
-      } else {
-        isInitialScanComplete = true;
-      }
-    }
-    
-    // Update sensor readings
-    updateSensorStates();
-    
-    // Execute strategy based on sensors and continuous scanning
-    executeStrategy();
-  } else {
-    // Robot is inactive, ensure motors are stopped
-    stopMovement();
+  // Read the Jsumo switch - acts as a one-time trigger
+  int JSUMOdata = digitalRead(JSUMO_SWITCH);
+
+  // If Jsumo switch is pressed and robot isn't active yet, activate it
+  if (JSUMOdata && !robotActive) {
+    waitStartTime = millis();
+    waitOnce = true;
+    robotActive = true;
     isInitialScanComplete = false;
     startTime = 0;
   }
-}
-
-// Handle JSUMO switch state changes with debouncing
-void handleJsumoSwitch() {
-  // Read the current state of the switch
-  bool newSwitchState = digitalRead(JSUMO_SWITCH);
   
-  // Check if the switch state has changed
-  if (newSwitchState != previousSwitchState) {
-    // Update last switch change time
-    lastSwitchChangeTime = millis();
-  }
-  
-  // If the state has been stable for the debounce period
-  if ((millis() - lastSwitchChangeTime) > DEBOUNCE_TIME) {
-    // If the current state is different from the last stable state
-    if (newSwitchState != currentSwitchState) {
-      currentSwitchState = newSwitchState;
-      
-      // If the switch is pressed (HIGH)
-      if (currentSwitchState == HIGH) {
-        // Toggle robot active state
-        robotActive = !robotActive;
-        
-        // Reset scan state if turning robot on
-        if (robotActive) {
-          isInitialScanComplete = false;
-          startTime = 0;
+  // Run robot logic if it's active
+  if (robotActive) {
+    // Only proceed after initial 3-second delay
+    if (millis() - waitStartTime >= 3000) {
+      // Initial 3-second scan without moving
+      if (!isInitialScanComplete) {
+        if (startTime == 0) {
+          startTime = millis();
+          // Reset opponent detection flags
+          isOpponentVisible = false;
+          preferredDirection = 0;
         }
+        
+        // During the 3-second period, only perform scanning
+        if (millis() - startTime < 3000) {
+          stopMovement(); // Ensure we're not moving
+          performInitialScan(); // Only scan, don't move
+        } else {
+          isInitialScanComplete = true;
+        }
+      } else {
+        // Update sensor readings
+        updateSensorStates();
+        
+        // Execute strategy based on sensors and continuous scanning
+        executeStrategy();
       }
+    } else {
+      // During initial 3-second delay, ensure we're not moving
+      stopMovement();
     }
+  } else {
+    // Robot not yet activated
+    stopMovement();
   }
-  
-  // Save the current reading for next comparison
-  previousSwitchState = newSwitchState;
 }
 
 // Perform initial scan using only sensors (no movement)

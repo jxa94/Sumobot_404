@@ -2,18 +2,21 @@
 // Comprehensive sensor testing for Sumo Bot (Line sensors removed)
 #include <Arduino.h>
 
-// Motor pins: Digital output
-#define M1L 11
-#define M1R 10
-#define M2L 5
-#define M2R 6
+// BTS7960 Motor control pins
+// Motor right
+#define M2R 10  // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M2L 11  // Left/Backward PWM pin - connect to LPWM on BTS7960
+
+// Motor left
+#define M1R 5   // Right/Forward PWM pin - connect to RPWM on BTS7960
+#define M1L 6   // Left/Backward PWM pin - connect to LPWM on BTS7960
 
 // Starter switch: Digital input
-#define JSUMO_SWITCH 4
+#define JSUMO_SWITCH 2
 
 // Bump sensors
-#define BUMP_LEFT 7
-#define BUMP_RIGHT 8
+#define BUMP_LEFT 12
+#define BUMP_RIGHT 4
 
 // IR reflectance sensors: Analog input
 #define IR_REFLECT_LEFT A0
