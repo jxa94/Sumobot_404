@@ -31,6 +31,9 @@ const int SPEED_MEDIUM = 80; // Medium attack speed
 const int SPEED_FAST = 120;   // Fast attack speed
 const int SPEED_MAX = 200;    // Maximum speed for direct contact
 
+// Motor balancing factor - RIGHT motor will run at this percentage of LEFT motor's speed
+const float RIGHT_MOTOR_FACTOR = 0.95; // 95% of left motor speed - adjust as needed
+
 const int ONstate = 1;
 const int BUMP_LEFT_BIT = 0;
 const int BUMP_RIGHT_BIT = 1;
@@ -343,42 +346,54 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
   }
 }
 
-// Movement Functions for BTS7960 - MODIFIED for parallel motors
+// Movement Functions for BTS7960 - MODIFIED for parallel motors with RIGHT_MOTOR_FACTOR
 void moveForward(int leftSpeed, int rightSpeed) {
+  // Apply the RIGHT_MOTOR_FACTOR to rightSpeed
+  int adjustedRightSpeed = (int)(rightSpeed * RIGHT_MOTOR_FACTOR);
+  
   // Left motor forward (one direction)
   analogWrite(M1_RPWM, leftSpeed);
   analogWrite(M1_LPWM, 0);
   
-  // Right motor forward (opposite direction due to parallel setup)
-  analogWrite(M2_LPWM, rightSpeed);
+  // Right motor forward (opposite direction due to parallel setup) - with speed adjustment
+  analogWrite(M2_LPWM, adjustedRightSpeed);
   analogWrite(M2_RPWM, 0);
 }
 
 void moveBackward(int leftSpeed, int rightSpeed) {
+  // Apply the RIGHT_MOTOR_FACTOR to rightSpeed
+  int adjustedRightSpeed = (int)(rightSpeed * RIGHT_MOTOR_FACTOR);
+  
   // Left motor backward
   analogWrite(M1_LPWM, leftSpeed);
   analogWrite(M1_RPWM, 0);
   
-  // Right motor backward (opposite direction due to parallel setup)
-  analogWrite(M2_RPWM, rightSpeed);
+  // Right motor backward (opposite direction due to parallel setup) - with speed adjustment
+  analogWrite(M2_RPWM, adjustedRightSpeed);
   analogWrite(M2_LPWM, 0);
 }
 
 void turnLeft(int leftSpeed, int rightSpeed) {
+  // Apply the RIGHT_MOTOR_FACTOR to rightSpeed
+  int adjustedRightSpeed = (int)(rightSpeed * RIGHT_MOTOR_FACTOR);
+  
   // Left motor backward, Right motor backward
   analogWrite(M1_LPWM, leftSpeed);
   analogWrite(M1_RPWM, 0);
   
-  analogWrite(M2_RPWM, rightSpeed);
+  analogWrite(M2_RPWM, adjustedRightSpeed);
   analogWrite(M2_LPWM, 0);
 }
 
 void turnRight(int leftSpeed, int rightSpeed) {
+  // Apply the RIGHT_MOTOR_FACTOR to rightSpeed
+  int adjustedRightSpeed = (int)(rightSpeed * RIGHT_MOTOR_FACTOR);
+  
   // Left motor forward, Right motor forward
   analogWrite(M1_RPWM, leftSpeed);
   analogWrite(M1_LPWM, 0);
   
-  analogWrite(M2_LPWM, rightSpeed);
+  analogWrite(M2_LPWM, adjustedRightSpeed);
   analogWrite(M2_RPWM, 0);
 }
 
