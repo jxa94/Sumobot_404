@@ -27,10 +27,10 @@
 
 // Constants
 const int SPEED_TURN_PIVOT_INNER = 10; // Speed for the inner wheel during a pivot (can be 0 for true pivot)
-const int SPEED_SLOW = 20;
-const int SPEED_MEDIUM = 40;
-const int SPEED_FAST = 60; // Used for pivot outer wheel speed
-const int SPEED_MAX = 80;
+const int SPEED_SLOW = 50;
+const int SPEED_MEDIUM = 100;
+const int SPEED_FAST = 150; // Used for pivot outer wheel speed
+const int SPEED_MAX = 200;
 
 const float RIGHT_MOTOR_FACTOR = 1.0;
 
