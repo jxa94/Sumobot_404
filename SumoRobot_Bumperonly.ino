@@ -71,7 +71,7 @@ void handleJsumoSwitch();
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Robot Setup (1s Fwd Charge on Start) Starting...");
+  Serial.println("Robot Setup (1s Fwd Charge on Start, then Stop) Starting...");
 
   pinMode(M1_RPWM, OUTPUT);
   pinMode(M1_LPWM, OUTPUT);
@@ -95,11 +95,12 @@ void loop() {
     // The moveForward(SPEED_MAX) command was given in handleJsumoSwitch.
     // updateMotorsWithRamping will continue to execute it.
     if (millis() - initialChargeStartTime >= INITIAL_CHARGE_DURATION) {
-      Serial.println("Initial 1s forward charge complete. Transitioning to main strategy.");
+      Serial.println("Initial 1s forward charge complete. Stopping, then transitioning to main strategy.");
       isPerformingInitialCharge = false;
+      stopMovement(); // <<< EDITED: Re-added stopMovement() here
     }
     // Note: If a bumper is hit *during* the initial charge, 
-    // executeStrategy will handle it once the charge duration is over.
+    // executeStrategy will handle it once the charge duration is over and robot is stopped.
   } else if (robotActive) { // Not in initial charge, but robot is active
     updateBumpSensorState();
     executeStrategy();
@@ -127,15 +128,13 @@ void handleJsumoSwitch() {
       isRetreatingAfterBump = false;
       
       moveForward(SPEED_MAX); // Start the initial forward charge
-    } else {
-      // Serial.println("MicroStart Signal HIGH, but robot already active/charging. No change.");
     }
   }
   jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh;
 }
 
 void executeStrategy() {
-  // This function is now called AFTER the initial 1s charge (if it happened)
+  // This function is now called AFTER the initial 1s charge and subsequent stopMovement()
   // or if the robot was already active and not in the charge phase.
 
   // Priority 1: Bumper is currently pressed
@@ -165,6 +164,7 @@ void executeStrategy() {
   }
 
   // Priority 4: No bump, not retreating -> Pivot
+  // This will be called after the robot has stopped (due to stopMovement() in loop or after retreat)
   pivotLeft(SPEED_PIVOT_DEFAULT);
 }
 
