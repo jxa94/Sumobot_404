@@ -28,9 +28,9 @@
 // Constants
 const int SPEED_TURN_PIVOT_INNER = 10; // Speed for the inner wheel during an ARC turn
 const int SPEED_SLOW = 50;
-const int SPEED_MEDIUM = 100;
-const int SPEED_FAST = 150; // Used for pivot outer wheel speed & zero-radius pivot speed
-const int SPEED_MAX = 200;
+const int SPEED_MEDIUM = 90;
+const int SPEED_FAST = 125; // Used for pivot outer wheel speed & zero-radius pivot speed
+const int SPEED_MAX = 150;
 
 const float RIGHT_MOTOR_FACTOR = 1.0;
 
