@@ -17,7 +17,7 @@
 #define BUMP_RIGHT 4
 
 // Constants
-const int SPEED_MAX = 200;             // Maximum speed for bumper attacks AND initial charge
+const int SPEED_MAX = 220;             // Maximum speed for bumper attacks AND initial charge
 const int SPEED_RETREAT = 100;         // Speed for retreating after bump
 const int SPEED_PIVOT_DEFAULT = 80;    // Speed for the continuous pivot search
 
@@ -97,8 +97,6 @@ void loop() {
     if (millis() - initialChargeStartTime >= INITIAL_CHARGE_DURATION) {
       Serial.println("Initial 1s forward charge complete. Transitioning to main strategy.");
       isPerformingInitialCharge = false;
-      stopMovement(); // Stop briefly to allow executeStrategy to decide next move.
-                      // The next loop iteration will call executeStrategy.
     }
     // Note: If a bumper is hit *during* the initial charge, 
     // executeStrategy will handle it once the charge duration is over.
