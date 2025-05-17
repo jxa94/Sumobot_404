@@ -26,11 +26,12 @@
 #define ULTRASONIC_ECHO A4
 
 // Constants
-const int SPEED_TURN_PIVOT_INNER = 10; // Speed for the inner wheel during a pivot (can be 0 for true pivot)
+const int SPEED_TURN_PIVOT_INNER = 10;
 const int SPEED_SLOW = 50;
 const int SPEED_MEDIUM = 100;
-const int SPEED_FAST = 150; // Used for pivot outer wheel speed
+const int SPEED_FAST = 150;
 const int SPEED_MAX = 200;
+const int SPEED_SPIN = 130; // Speed for one-wheel spins, can be adjusted
 
 const float RIGHT_MOTOR_FACTOR = 1.0;
 
@@ -59,11 +60,9 @@ int preferredDirection = 0;
 unsigned long lastOpponentDetectionTime = 0;
 bool isOpponentVisible = false;
 
-// JSUMO MicroStart switch variables
-bool robotActive = false; // True if the robot is supposed to be running (MicroStart signal is HIGH)
-bool jsumoSignalWasHighLastFrame = false; // Tracks the previous state of the JSUMO_SWITCH signal
+bool robotActive = false;
+bool jsumoSignalWasHighLastFrame = false;
 
-// Search state variables
 enum SearchBotState {
   SEARCH_STATE_PIVOTING,
   SEARCH_STATE_INIT_FORWARD,
@@ -75,7 +74,6 @@ unsigned long searchStateTimer = 0;
 const unsigned long SEARCH_FORWARD_DURATION = 500;
 const unsigned long SEARCH_STOP_DURATION = 200;
 
-// Special Turn State for US detection
 enum SpecialTurnState {
   TURN_STATE_NONE,
   TURN_STATE_US_TRIGGERED_PIVOT_LEFT,
@@ -83,9 +81,8 @@ enum SpecialTurnState {
 };
 SpecialTurnState currentSpecialTurn = TURN_STATE_NONE;
 unsigned long specialTurnStartTime = 0;
-const unsigned long MAX_SPECIAL_TURN_DURATION = 4000;
+const unsigned long MAX_SPECIAL_TURN_DURATION = 3000; // Reduced special turn duration a bit
 
-// --- Motor Ramping Variables ---
 int currentActualLeftSpeed = 0;
 int currentActualRightSpeed = 0;
 int targetLeftSpeedMagnitude = 0;
@@ -107,6 +104,8 @@ void moveForward(int speed);
 void moveBackward(int speed);
 void pivotLeft(int outerSpeed, int innerSpeed = SPEED_TURN_PIVOT_INNER);
 void pivotRight(int outerSpeed, int innerSpeed = SPEED_TURN_PIVOT_INNER);
+void spinLeftOneWheel(int speed);    // <<< NEW
+void spinRightOneWheel(int speed);   // <<< NEW
 void stopMovement();
 
 int getIRDistance(int sensorPin, bool actualMaxVal = false);
@@ -116,7 +115,7 @@ void searchOpponent();
 void attackWithBumpers();
 void performInitialScan();
 void executeStrategy();
-void handleJsumoSwitch(); // Declaration updated (no longer one-time)
+void handleJsumoSwitch();
 void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long backDist);
 
 
@@ -140,30 +139,29 @@ void setup() {
   pinMode(BUMP_LEFT, INPUT_PULLUP);
   pinMode(BUMP_RIGHT, INPUT_PULLUP);
 
-  pinMode(JSUMO_SWITCH, INPUT_PULLUP); // Or INPUT if module has strong pull-downs for LOW
+  pinMode(JSUMO_SWITCH, INPUT_PULLUP);
 
   stopMovement();
 
-  // Initialize JSUMO switch state
   jsumoSignalWasHighLastFrame = (digitalRead(JSUMO_SWITCH) == HIGH);
   Serial.println("Setup Complete. Waiting for MicroStart Signal.");
 }
 
 void loop() {
-  handleJsumoSwitch(); // Manages robotActive state based on MicroStart signal
+  handleJsumoSwitch();
 
   if (robotActive) {
     if (isPerformingInitialScan) {
-      stopMovement(); // Ensure motors are stopped during the initial scan phase
+      stopMovement();
       performInitialScan();
 
       if (millis() - initialScanStartTime >= 3000) {
         isPerformingInitialScan = false;
-        currentSpecialTurn = TURN_STATE_NONE; // Ensure special turn is reset after scan
+        currentSpecialTurn = TURN_STATE_NONE;
         Serial.println("Initial 3s scan complete. Starting main strategy.");
-        currentSearchState = SEARCH_STATE_PIVOTING; // Or your desired post-scan state
+        currentSearchState = SEARCH_STATE_PIVOTING;
       }
-    } else { // Main operational logic
+    } else {
       if (currentSpecialTurn != TURN_STATE_NONE) {
         int irLeft = getIRDistance(IR_REFLECT_LEFT);
         int irCenter = getIRDistance(IR_REFLECT_CENTER);
@@ -174,89 +172,84 @@ void loop() {
                                    irRight < IR_DETECTION_THRESHOLD);
 
         if (targetAcquiredByIR) {
-          Serial.println("Special Pivot: Target ACQUIRED by IR.");
-          stopMovement();
+          Serial.println("Special Pivot: Target ACQUIRED by IR during spin.");
+          stopMovement(); // Stop the spin
           currentSpecialTurn = TURN_STATE_NONE;
           isOpponentVisible = true;
           lastOpponentDetectionTime = millis();
+          // Let adjustDirectionToOpponent handle the IR target on the next cycle
+          // Update preferred direction based on IR
           if (irCenter < irLeft && irCenter < irRight && irCenter < IR_DETECTION_THRESHOLD) preferredDirection = 0;
           else if (irLeft < irRight && irLeft < IR_DETECTION_THRESHOLD) preferredDirection = -1;
           else if (irRight < IR_DETECTION_THRESHOLD) preferredDirection = 1;
+          executeStrategy(); // Immediately try to act on the new IR data
         } else if (millis() - specialTurnStartTime > MAX_SPECIAL_TURN_DURATION) {
-          Serial.println("Special Pivot: MAX DURATION reached.");
-          stopMovement();
+          Serial.println("Special Pivot: MAX DURATION reached for spin.");
+          stopMovement(); // Stop the spin
           currentSpecialTurn = TURN_STATE_NONE;
-          isOpponentVisible = false;
+          isOpponentVisible = false; // Assume lost if timed out
         } else {
+          // Continue the special one-wheel spin
           if (currentSpecialTurn == TURN_STATE_US_TRIGGERED_PIVOT_LEFT) {
-            pivotLeft(SPEED_FAST);
+            spinLeftOneWheel(SPEED_SPIN); // <<< EDITED to use new spin function and speed
+            // Serial.println("Special Pivot: Spinning Left (one wheel)"); // Redundant if printed once at start
           } else { // TURN_STATE_US_TRIGGERED_PIVOT_RIGHT
-            pivotRight(SPEED_FAST);
+            spinRightOneWheel(SPEED_SPIN); // <<< EDITED to use new spin function and speed
+            // Serial.println("Special Pivot: Spinning Right (one wheel)"); // Redundant
           }
         }
       }
       
-      if (currentSpecialTurn == TURN_STATE_NONE) { 
+      if (currentSpecialTurn == TURN_STATE_NONE) { // Only run main strategy if not in a special spin
             updateBumpSensorState();
             executeStrategy();
       }
     }
-  } else { // robotActive is false
+  } else {
     stopMovement();
-    currentSpecialTurn = TURN_STATE_NONE; // Reset special turn state
-    isPerformingInitialScan = false; // Ensure scan flag is also reset
-    // The robot is waiting for a "Start" signal or has been "Stopped"
+    currentSpecialTurn = TURN_STATE_NONE;
+    isPerformingInitialScan = false;
   }
 
   updateMotorsWithRamping();
 }
 
-// Handles MicroStart Start/Stop Signal
 void handleJsumoSwitch() {
   bool signalIsCurrentlyHigh = (digitalRead(JSUMO_SWITCH) == HIGH);
 
-  if (signalIsCurrentlyHigh && !jsumoSignalWasHighLastFrame) { // Rising edge: Start signal
-    if (!robotActive) { // Only act if robot is currently inactive
+  if (signalIsCurrentlyHigh && !jsumoSignalWasHighLastFrame) {
+    if (!robotActive) {
       Serial.println("Robot Activated by MicroStart (Signal HIGH). Starting initial scan.");
       robotActive = true;
-      isPerformingInitialScan = true; // Begin the initial scan sequence
+      isPerformingInitialScan = true;
       initialScanStartTime = millis();
-
-      // Reset relevant states for a fresh start
       isOpponentVisible = false;
       preferredDirection = 0;
       lastOpponentDetectionTime = 0;
       bumpSensorState = 0;
       currentSpecialTurn = TURN_STATE_NONE;
-      currentSearchState = SEARCH_STATE_PIVOTING; // Or your desired initial search state
-      stopMovement(); // Ensure motors are stopped before scan begins
+      currentSearchState = SEARCH_STATE_PIVOTING;
+      stopMovement();
     }
-  } else if (!signalIsCurrentlyHigh && jsumoSignalWasHighLastFrame) { // Falling edge: Stop signal
-    if (robotActive) { // Only act if robot is currently active
+  } else if (!signalIsCurrentlyHigh && jsumoSignalWasHighLastFrame) {
+    if (robotActive) {
       Serial.println("Robot Deactivated by MicroStart (Signal LOW).");
       robotActive = false;
-      isPerformingInitialScan = false; // Stop scan if it was in progress
-      stopMovement(); // Stop all robot actions
-      // Note: The MicroStart module itself may need a power cycle to accept a new "Start" command from the remote.
+      isPerformingInitialScan = false;
+      stopMovement();
     }
   }
-  jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh; // Update last known state
+  jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh;
 }
 
 
 void performInitialScan() {
-  // This function is called for 3 seconds when isPerformingInitialScan is true
-  // It should ideally stop movement or perform a specific scan movement.
-  // The existing stopMovement() call at the start of the if(isPerformingInitialScan) block in loop()
-  // already ensures the robot is stationary.
-  // You might want to add a slow pivot here if desired, or just rely on sensors.
-
   int irLeft = getIRDistance(IR_REFLECT_LEFT, true);
   int irCenter = getIRDistance(IR_REFLECT_CENTER, true);
   int irRight = getIRDistance(IR_REFLECT_RIGHT, true);
   long backDist = getUltrasonicDistance(true);
 
-  isOpponentVisible = false; // Reset visibility at start of each scan check
+  isOpponentVisible = false;
 
   int minFrontIRDistance = IR_MAX_DISTANCE_VAL;
   bool frontIRDetecting = false;
@@ -266,18 +259,18 @@ void performInitialScan() {
 
   if (backDist < US_DETECTION_THRESHOLD_BACK && (backDist < minFrontIRDistance || !frontIRDetecting)) {
     isOpponentVisible = true;
-    lastOpponentDetectionTime = millis(); // Update detection time
-    if (frontIRDetecting) { // If front also sees something, prefer turning towards front
+    lastOpponentDetectionTime = millis();
+    if (frontIRDetecting) {
         if (irLeft < irRight && irLeft < IR_DETECTION_THRESHOLD) preferredDirection = -1;
         else if (irRight < irLeft && irRight < IR_DETECTION_THRESHOLD) preferredDirection = 1;
-        else preferredDirection = (random(2) == 0) ? -1 : 1; // If front is ambiguous but sees something
-    } else { // Only back sees something
-        preferredDirection = (random(2) == 0) ? -1 : 1; // Randomly pick a direction to turn towards back
+        else preferredDirection = (random(2) == 0) ? -1 : 1;
+    } else {
+        preferredDirection = (random(2) == 0) ? -1 : 1;
     }
-    Serial.println("Initial Scan: US is primary target. Preferred pivot direction set.");
+    Serial.println("Initial Scan: US is primary target. Preferred spin direction set.");
   } else if (frontIRDetecting) {
     isOpponentVisible = true;
-    lastOpponentDetectionTime = millis(); // Update detection time
+    lastOpponentDetectionTime = millis();
     if (irCenter == minFrontIRDistance && irCenter < IR_DETECTION_THRESHOLD) {
         preferredDirection = 0; Serial.println("Initial Scan: Opponent CENTER by IR.");
     } else if (irLeft == minFrontIRDistance && irLeft < IR_DETECTION_THRESHOLD) {
@@ -286,8 +279,6 @@ void performInitialScan() {
         preferredDirection = 1; Serial.println("Initial Scan: Opponent RIGHT by IR.");
     }
   }
-  // If nothing is seen, preferredDirection remains as it was or 0.
-  // Robot remains stationary during this scan as per current loop structure.
 }
 
 
@@ -296,7 +287,7 @@ void executeStrategy() {
     attackWithBumpers();
     lastOpponentDetectionTime = millis();
     isOpponentVisible = true;
-    currentSpecialTurn = TURN_STATE_NONE;
+    currentSpecialTurn = TURN_STATE_NONE; // Ensure any special turn is cancelled
     return;
   }
 
@@ -314,43 +305,47 @@ void executeStrategy() {
   bool usDetecting = (backDist < US_DETECTION_THRESHOLD_BACK);
 
   if (usDetecting && (backDist < minFrontIRDistance || !frontIRDetecting) && currentSpecialTurn == TURN_STATE_NONE) {
-    Serial.println("Strategy: US is primary target. Initiating SPECIAL PIVOT.");
-    isOpponentVisible = true;
+    Serial.println("Strategy: US is primary target. Initiating SPECIAL ONE-WHEEL SPIN.");
+    isOpponentVisible = true; // Mark as visible due to US
     lastOpponentDetectionTime = millis();
     specialTurnStartTime = millis();
 
-    int turnDecision = preferredDirection; // Use preferredDirection from initial scan or last sighting
-    if (turnDecision == 0) { // If no preference, or straight ahead, pick a random turn for US detection
+    int turnDecision = preferredDirection;
+    if (turnDecision == 0) {
         turnDecision = (random(2) == 0) ? -1 : 1;
     }
 
-    if (turnDecision <= 0) { // Includes -1 (left) and 0 (default to left if it was 0)
-         currentSpecialTurn = TURN_STATE_US_TRIGGERED_PIVOT_LEFT;
-    } else { // turnDecision is 1 (right)
-         currentSpecialTurn = TURN_STATE_US_TRIGGERED_PIVOT_RIGHT;
+    if (turnDecision <= 0) {
+         currentSpecialTurn = TURN_STATE_US_TRIGGERED_PIVOT_LEFT; // Will spin left
+         Serial.println("Special Spin Triggered: Left");
+    } else {
+         currentSpecialTurn = TURN_STATE_US_TRIGGERED_PIVOT_RIGHT; // Will spin right
+         Serial.println("Special Spin Triggered: Right");
     }
-    // The loop() will now handle the pivot action because currentSpecialTurn is set
+    // The loop() will now handle the spin because currentSpecialTurn is set
+    // No motor commands here, loop() handles the spin action itself.
+    return; // Return to let the loop handle the special turn immediately
   }
 
-
-  if (currentSpecialTurn == TURN_STATE_NONE) { // Only proceed if not initiating/in a special turn
+  // This part only runs if not initiating or in a special turn for US
+  if (currentSpecialTurn == TURN_STATE_NONE) {
     if (frontIRDetecting) {
       isOpponentVisible = true;
       lastOpponentDetectionTime = millis();
       adjustDirectionToOpponent(irLeft, irCenter, irRight, backDist);
-    } else if (usDetecting) { // US detects, but wasn't "primary" for special turn (e.g., front IR was closer)
+    } else if (usDetecting) {
       isOpponentVisible = true;
       lastOpponentDetectionTime = millis();
-      Serial.println("Strategy: US sees opponent (not primary for special pivot). Adjusting based on overall sensor view.");
-      adjustDirectionToOpponent(irLeft, irCenter, irRight, backDist); // Let adjustDirection decide
-    } else { // No current detection by IR or US
+      Serial.println("Strategy: US sees opponent (not primary for special spin). Adjusting.");
+      adjustDirectionToOpponent(irLeft, irCenter, irRight, backDist); // Let adjustDirection decide (might spin if back is close)
+    } else {
       if (millis() - lastOpponentDetectionTime < 1000 && isOpponentVisible) {
-        Serial.println("Strategy: Lost opponent briefly. Reacquiring based on last preferred direction.");
+        Serial.println("Strategy: Lost opponent briefly. Reacquiring.");
         if (preferredDirection < 0) pivotLeft(SPEED_MEDIUM);
         else if (preferredDirection > 0) pivotRight(SPEED_MEDIUM);
-        else moveForward(SPEED_MEDIUM); // If last seen center, try forward
+        else moveForward(SPEED_MEDIUM);
       } else {
-        isOpponentVisible = false; // Mark opponent as truly lost
+        isOpponentVisible = false;
         Serial.println("Strategy: Opponent lost or not found. Searching.");
         searchOpponent();
       }
@@ -364,22 +359,23 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
                             centerDist >= IR_DETECTION_THRESHOLD &&
                             rightDist >= IR_DETECTION_THRESHOLD);
 
-  // Priority: If opponent is very close behind OR behind and front is clear, pivot to face them
   if (backDist < US_DETECTION_THRESHOLD_BACK && (usVeryClose || frontSensorsClear) && currentSpecialTurn == TURN_STATE_NONE) {
-      Serial.print("Adjust: Opponent BEHIND (US: "); Serial.print(backDist); Serial.println("cm). Pivoting FAST to engage.");
-      // Use preferredDirection if set and indicates a side, otherwise pick one
-      if (preferredDirection == 1) pivotRight(SPEED_FAST);      // if preferred was right (meaning opponent was to robot's right, so turn right to face back)
-      else if (preferredDirection == -1) pivotLeft(SPEED_FAST); // if preferred was left
-      else { // If no strong preference or preferred was center, pick a default pivot
-          pivotRight(SPEED_FAST); // Default pivot to engage rear target
+      Serial.print("Adjust: Opponent BEHIND (US: "); Serial.print(backDist); Serial.println("cm). Spinning FAST to engage (one wheel).");
+      // Prefer spinning towards the side that was last "preferred" if known, otherwise default.
+      // If preferredDirection was for a front target, it might not be ideal, so consider a default spin.
+      // For simplicity, let's use preferredDirection if it's non-zero, or a default.
+      if (preferredDirection == 1) {      // If preferred was right, spin right to bring front to where back was
+          spinRightOneWheel(SPEED_SPIN);   // <<< EDITED
+      } else if (preferredDirection == -1) { // If preferred was left, spin left
+          spinLeftOneWheel(SPEED_SPIN);    // <<< EDITED
+      } else {                             // No strong preference or preferred was center, default spin
+          spinRightOneWheel(SPEED_SPIN);   // <<< EDITED (defaulting to spin right)
       }
-      // Update preferredDirection to reflect turning towards the back
-      // This logic could be more sophisticated, e.g. preferredDirection = (current_orientation_facing_front) ? +2 (means behind)
-      // For now, we just pivot. The next sensor readings will guide further.
-      return;
+      // isOpponentVisible = true; // Already true if US detected
+      lastOpponentDetectionTime = millis();
+      return; // Committed to a spin for this cycle
   }
 
-  // Next, address front IR sensors
   if (centerDist < IR_DETECTION_THRESHOLD && centerDist <= leftDist && centerDist <= rightDist) {
     Serial.print("Adjust: Opponent CENTER (IR: "); Serial.print(centerDist); Serial.println("cm). Attacking.");
     moveForward(centerDist < IR_CLOSE_THRESHOLD ? SPEED_FAST : SPEED_MEDIUM);
@@ -392,13 +388,13 @@ void adjustDirectionToOpponent(int leftDist, int centerDist, int rightDist, long
     Serial.print("Adjust: Opponent RIGHT (IR: "); Serial.print(rightDist); Serial.println("cm). Pivoting/Moving towards right.");
     setMotorTargets(1, SPEED_FAST, 1, rightDist < IR_CLOSE_THRESHOLD ? SPEED_TURN_PIVOT_INNER : SPEED_SLOW);
     preferredDirection = 1;
-  } else if (isOpponentVisible) { // IRs are ambiguous but opponent was recently seen
-      Serial.println("Adjust: Opponent was visible but current IRs ambiguous. Pivoting based on last known direction or searching.");
+  } else if (isOpponentVisible) {
+      Serial.println("Adjust: Opponent was visible but IRs ambiguous. Pivoting based on last known or searching.");
       if (preferredDirection < 0) pivotLeft(SPEED_MEDIUM);
       else if (preferredDirection > 0) pivotRight(SPEED_MEDIUM);
-      else searchOpponent(); // If last direction was center or unknown
-  } else { // No clear opponent, and not recently visible
-    Serial.println("Adjust: No clear opponent path, resorting to search.");
+      else searchOpponent();
+  } else {
+    Serial.println("Adjust: No clear opponent path, searching.");
     searchOpponent();
   }
 }
@@ -421,13 +417,23 @@ void moveBackward(int speed) {
   setMotorTargets(-1, speed, -1, speed);
 }
 
-void pivotLeft(int outerSpeed, int innerSpeed) {
+void pivotLeft(int outerSpeed, int innerSpeed) { // Standard pivot: both wheels forward, right (outer) faster
   setMotorTargets(1, innerSpeed, 1, outerSpeed);
 }
 
-void pivotRight(int outerSpeed, int innerSpeed) {
+void pivotRight(int outerSpeed, int innerSpeed) { // Standard pivot: both wheels forward, left (outer) faster
   setMotorTargets(1, outerSpeed, 1, innerSpeed);
 }
+
+// <<< NEW FUNCTIONS for one-wheel spin >>>
+void spinLeftOneWheel(int speed) { // Turn body left: Right wheel forward, Left wheel stop
+  setMotorTargets(0, 0, 1, speed); // M1 (Left) Stop, M2 (Right) Forward
+}
+
+void spinRightOneWheel(int speed) { // Turn body right: Left wheel forward, Right wheel stop
+  setMotorTargets(1, speed, 0, 0);  // M1 (Left) Forward, M2 (Right) Stop
+}
+// <<< END NEW FUNCTIONS >>>
 
 void stopMovement() {
   setMotorTargets(0, 0, 0, 0);
@@ -495,36 +501,39 @@ int getIRDistance(int sensorPin, bool actualMaxVal) {
   float voltage = reading * (5.0 / 1023.0);
 
   float distance;
-  if (voltage < 0.42) { // Too far or no reflection
+  if (voltage < 0.42) {
       return actualMaxVal ? IR_MAX_DISTANCE_VAL : IR_DETECTION_THRESHOLD + 1;
-  } else if (voltage > 2.8) { // Very close
+  } else if (voltage > 2.8) {
       distance = 5;
   } else if (voltage > 1.5) {
       distance = 10;
   } else if (voltage > 0.8) {
       distance = 20;
-  } else if (voltage > 0.42) { // Furthest reliable reading before threshold
+  } else if (voltage > 0.42) {
       distance = 35;
-  } else { // Should be caught by the first if, but as a fallback
+  } else {
       distance = IR_MAX_DISTANCE_VAL;
   }
 
-  // Ensure distance is within expected bounds, especially for threshold checks
   if (distance > (actualMaxVal ? IR_MAX_DISTANCE_VAL : IR_DETECTION_THRESHOLD + 1) ) {
       return actualMaxVal ? IR_MAX_DISTANCE_VAL : IR_DETECTION_THRESHOLD + 1;
   }
-  if (distance < IR_MIN_DISTANCE && distance > 0) return IR_MIN_DISTANCE; // prevent returning extremely small values if calibration is off
+  if (distance < IR_MIN_DISTANCE && distance > 0) return IR_MIN_DISTANCE;
   return (int)distance;
 }
 
 long getUltrasonicDistance(bool actualMaxVal) {
+  // These short delays are necessary for the HC-SR04 sensor to trigger correctly.
+  // They are in microseconds and do not significantly block the loop.
   digitalWrite(ULTRASONIC_TRIG, LOW);
-  delayMicroseconds(2);
+  delayMicroseconds(2); // Ensure TRIG pin is low for a short period
   digitalWrite(ULTRASONIC_TRIG, HIGH);
-  delayMicroseconds(10);
+  delayMicroseconds(10); // Send a 10 microsecond pulse to TRIG
   digitalWrite(ULTRASONIC_TRIG, LOW);
 
-  long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 25000); // Timeout 25ms (approx 4.25m, well beyond sumo needs)
+  // pulseIn() will wait for the echo or timeout.
+  // Timeout is 25ms. If no echo, code pauses here for up to 25ms.
+  long duration = pulseIn(ULTRASONIC_ECHO, HIGH, 25000);
   long distance = duration * 0.034 / 2;
 
   if (distance == 0 || distance > (actualMaxVal ? US_MAX_DISTANCE_VAL : US_DETECTION_THRESHOLD_BACK + 1) ) {
@@ -546,49 +555,47 @@ void updateBumpSensorState() {
 // --- Strategy Sub-Functions ---
 void searchOpponent() {
   unsigned long currentTime = millis();
-  // Switch pivot direction or occasionally move forward
-  if (currentSearchState == SEARCH_STATE_PIVOTING && currentTime - lastScanTime > 2000) { // Pivot for 2s
-    scanDirection = -scanDirection; // Change pivot direction
+  if (currentSearchState == SEARCH_STATE_PIVOTING && currentTime - lastScanTime > 2000) {
+    scanDirection = -scanDirection;
     lastScanTime = currentTime;
-    if (random(3) == 0) { // 1/3 chance to try moving forward
+    if (random(3) == 0) {
       currentSearchState = SEARCH_STATE_INIT_FORWARD;
-      searchStateTimer = currentTime; // Reset timer for forward move
+      searchStateTimer = currentTime;
       Serial.println("Search: Switching to short forward burst.");
-      return; // Exit to allow forward move to start
+      return;
     }
   }
 
   switch (currentSearchState) {
-    case SEARCH_STATE_PIVOTING:
+    case SEARCH_STATE_PIVOTING: // Uses standard two-wheel pivot
       if (scanDirection == 1) {
         pivotRight(SPEED_MEDIUM);
-        Serial.println("Search: Pivoting Right.");
+        Serial.println("Search: Pivoting Right (standard).");
       } else {
         pivotLeft(SPEED_MEDIUM);
-        Serial.println("Search: Pivoting Left.");
+        Serial.println("Search: Pivoting Left (standard).");
       }
-      preferredDirection = scanDirection; // Update preferred direction based on scan
+      preferredDirection = scanDirection;
       break;
     case SEARCH_STATE_INIT_FORWARD:
       moveForward(SPEED_SLOW);
       currentSearchState = SEARCH_STATE_MOVING_FORWARD;
-      // searchStateTimer was set when transitioning to INIT_FORWARD
       break;
     case SEARCH_STATE_MOVING_FORWARD:
-      moveForward(SPEED_SLOW); // Continue moving forward
+      moveForward(SPEED_SLOW);
       if (millis() - searchStateTimer >= SEARCH_FORWARD_DURATION) {
         stopMovement();
-        searchStateTimer = millis(); // Reset timer for stop duration
+        searchStateTimer = millis();
         currentSearchState = SEARCH_STATE_STOPPING_AFTER_FORWARD;
         Serial.println("Search: Finished forward burst, stopping briefly.");
       }
       break;
     case SEARCH_STATE_STOPPING_AFTER_FORWARD:
-      stopMovement(); // Ensure stopped
+      stopMovement();
       if (millis() - searchStateTimer >= SEARCH_STOP_DURATION) {
-        currentSearchState = SEARCH_STATE_PIVOTING; // Go back to pivoting
-        lastScanTime = millis(); // Reset scan timer for pivoting
-        Serial.println("Search: Resuming pivot.");
+        currentSearchState = SEARCH_STATE_PIVOTING;
+        lastScanTime = millis();
+        Serial.println("Search: Resuming pivot (standard).");
       }
       break;
   }
