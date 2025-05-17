@@ -127,7 +127,7 @@ void handleJsumoSwitch() {
       previousBumpSensorState = 0;
       isRetreatingAfterBump = false;
       
-      moveForward(SPEED_MAX); // Start the initial forward charge
+      moveForward(SPEED_RETREAT); // Start the initial forward charge
     }
   }
   jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh;
