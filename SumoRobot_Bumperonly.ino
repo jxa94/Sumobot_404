@@ -17,7 +17,7 @@
 #define BUMP_RIGHT 4
 
 // Constants
-const int SPEED_MAX = 200;             // Maximum speed for bumper attacks
+const int SPEED_MAX = 200;             // Maximum speed for bumper attacks AND initial charge
 const int SPEED_RETREAT = 100;         // Speed for retreating after bump
 const int SPEED_PIVOT_DEFAULT = 70;    // Speed for the continuous pivot search
 
@@ -37,6 +37,11 @@ const unsigned long BUMPER_RETREAT_DURATION = 300; // How long to retreat
 bool robotActive = false;                 // Is the robot's main logic allowed to run?
 bool jsumoSignalWasHighLastFrame = false; // To detect rising edge of JSumo signal
 
+// Initial Forward Charge State
+bool isPerformingInitialCharge = false;
+unsigned long initialChargeStartTime = 0;
+const unsigned long INITIAL_CHARGE_DURATION = 1000; // 1000 ms = 1 second
+
 // --- Motor Ramping Variables ---
 int currentActualLeftSpeed = 0;
 int currentActualRightSpeed = 0;
@@ -47,9 +52,9 @@ int currentRightMotorDirection = 0; // 0: Stop, 1: Forward, -1: Backward
 int targetLeftMotorDirection = 0;
 int targetRightMotorDirection = 0;
 
-const int ACCELERATION_STEP = 15; // How much to change speed per ramp interval (tune for responsiveness)
+const int ACCELERATION_STEP = 15; 
 unsigned long lastMotorRampTime = 0;
-const unsigned long MOTOR_RAMP_INTERVAL = 15; // ms, how often to update motor speeds (tune for responsiveness)
+const unsigned long MOTOR_RAMP_INTERVAL = 15;
 
 // Function declarations
 void setMotorTargets(int leftDir, int leftSpd, int rightDir, int rightSpd);
@@ -66,7 +71,7 @@ void handleJsumoSwitch();
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Simplified Robot Setup (No Delay) Starting...");
+  Serial.println("Robot Setup (1s Fwd Charge on Start) Starting...");
 
   pinMode(M1_RPWM, OUTPUT);
   pinMode(M1_LPWM, OUTPUT);
@@ -86,50 +91,63 @@ void setup() {
 void loop() {
   handleJsumoSwitch();
 
-  if (robotActive) {
-    updateBumpSensorState(); // Read bumpers
-    executeStrategy();       // Decide what to do
-  } else {
-    // Robot is not active (e.g., before first start signal or if explicitly deactivated later)
+  if (isPerformingInitialCharge) {
+    // The moveForward(SPEED_MAX) command was given in handleJsumoSwitch.
+    // updateMotorsWithRamping will continue to execute it.
+    if (millis() - initialChargeStartTime >= INITIAL_CHARGE_DURATION) {
+      Serial.println("Initial 1s forward charge complete. Transitioning to main strategy.");
+      isPerformingInitialCharge = false;
+      stopMovement(); // Stop briefly to allow executeStrategy to decide next move.
+                      // The next loop iteration will call executeStrategy.
+    }
+    // Note: If a bumper is hit *during* the initial charge, 
+    // executeStrategy will handle it once the charge duration is over.
+  } else if (robotActive) { // Not in initial charge, but robot is active
+    updateBumpSensorState();
+    executeStrategy();
+  } else { // Robot is not active (and not in initial charge)
     stopMovement();
-    isRetreatingAfterBump = false; // Reset retreat state if deactivated
+    isRetreatingAfterBump = false;
   }
 
-  updateMotorsWithRamping(); // Apply speeds to motors
+  updateMotorsWithRamping();
 }
 
 void handleJsumoSwitch() {
   bool signalIsCurrentlyHigh = (digitalRead(JSUMO_SWITCH) == HIGH);
 
   if (signalIsCurrentlyHigh && !jsumoSignalWasHighLastFrame) { // Rising edge detected
-    if (!robotActive) { // Only activate if not already running
-      Serial.println("Robot Activated by MicroStart. Engaging Strategy Immediately!");
-      robotActive = true; // Robot is now fully active
+    if (!robotActive && !isPerformingInitialCharge) { // Only activate if not already running or charging
+      Serial.println("Robot Activated by MicroStart. Starting 1s forward charge!");
+      isPerformingInitialCharge = true;
+      initialChargeStartTime = millis();
+      robotActive = true; // Robot is active, but in a special initial phase
       
-      // Reset relevant states at activation
-      stopMovement(); // Ensure motors are stopped before strategy begins
+      // Reset other relevant states at activation
       bumpSensorState = 0;
       previousBumpSensorState = 0;
       isRetreatingAfterBump = false;
-      // Ensure motor targets are also reset (stopMovement handles this)
+      
+      moveForward(SPEED_MAX); // Start the initial forward charge
     } else {
-      // Serial.println("MicroStart Signal HIGH, but robot already active. No change.");
+      // Serial.println("MicroStart Signal HIGH, but robot already active/charging. No change.");
     }
   }
-  // If signal goes low, robot remains active due to robotActive flag
-  jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh; // Update for next cycle
+  jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh;
 }
 
 void executeStrategy() {
+  // This function is now called AFTER the initial 1s charge (if it happened)
+  // or if the robot was already active and not in the charge phase.
+
   // Priority 1: Bumper is currently pressed
   if (bumpSensorState > 0) {
     attackWithBumpers();
-    isRetreatingAfterBump = false; // Stop any retreat if new bump occurs
-    // Serial.println("Strategy: BUMPER ACTIVE! ATTACKING!");
+    isRetreatingAfterBump = false;
     return;
   }
 
-  // Priority 2: Bumper was just released (transition from pressed to not pressed)
+  // Priority 2: Bumper was just released
   if (previousBumpSensorState > 0 && bumpSensorState == 0) {
     Serial.println("Strategy: Bumper released. Initiating brief retreat.");
     isRetreatingAfterBump = true;
@@ -138,45 +156,18 @@ void executeStrategy() {
     return;
   }
 
-  // Priority 3: Currently retreating after a bumper release
+  // Priority 3: Currently retreating
   if (isRetreatingAfterBump) {
     if (millis() - retreatStartTime >= BUMPER_RETREAT_DURATION) {
       Serial.println("Strategy: Retreat complete. Resuming pivot search.");
       isRetreatingAfterBump = false;
-      stopMovement(); // Stop briefly before pivoting again
-    } else {
-      // Continue retreating (moveBackward already called when retreat started)
-      // Serial.println("Strategy: Retreating...");
+      stopMovement(); 
     }
     return;
   }
 
-  // Priority 4: No bump active, not retreating -> Default behavior: Turn continuously.
-  // Serial.println("Strategy: No opponent contact. Pivoting...");
-  pivotLeft(SPEED_PIVOT_DEFAULT); // Continuously pivot left (or right, or alternate)
-  // Example for alternating pivot:
-  // static unsigned long lastPivotSwitchTime = 0;
-  // static bool pivotDirectionLeft = true;
-  // const unsigned long PIVOT_SWITCH_INTERVAL = 3000; // Pivot for 3s in one direction
-
-  // if (millis() - lastPivotSwitchTime > PIVOT_SWITCH_INTERVAL) {
-  //   pivotDirectionLeft = !pivotDirectionLeft;
-  //   lastPivotSwitchTime = millis();
-  //   stopMovement(); // Brief stop before changing pivot direction for smoother transition
-  //   Serial.print("Strategy: Switching pivot direction to ");
-  //   Serial.println(pivotDirectionLeft ? "LEFT" : "RIGHT");
-  // }
-
-  // // Ensure stopMovement has a chance to ramp down before new pivot command if switch just happened
-  // if (millis() - lastPivotSwitchTime < MOTOR_RAMP_INTERVAL * 5 && millis() != lastPivotSwitchTime) { // Wait a few ramp cycles
-  //     // Motors are stopping or have just stopped
-  // } else {
-  //    if (pivotDirectionLeft) {
-  //      pivotLeft(SPEED_PIVOT_DEFAULT);
-  //    } else {
-  //      pivotRight(SPEED_PIVOT_DEFAULT);
-  //    }
-  // }
+  // Priority 4: No bump, not retreating -> Pivot
+  pivotLeft(SPEED_PIVOT_DEFAULT);
 }
 
 // --- Helper function to set motor targets ---
@@ -198,11 +189,11 @@ void moveBackward(int speed) {
 }
 
 void pivotLeft(int speed) {
-  setMotorTargets(-1, speed, 1, speed); // Left motor backward, Right motor forward
+  setMotorTargets(-1, speed, 1, speed);
 }
 
 void pivotRight(int speed) {
-  setMotorTargets(1, speed, -1, speed); // Left motor forward, Right motor backward
+  setMotorTargets(1, speed, -1, speed);
 }
 
 void stopMovement() {
