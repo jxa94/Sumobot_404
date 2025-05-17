@@ -19,7 +19,7 @@
 // Constants
 const int SPEED_MAX = 200;             // Maximum speed for bumper attacks AND initial charge
 const int SPEED_RETREAT = 100;         // Speed for retreating after bump
-const int SPEED_PIVOT_DEFAULT = 70;    // Speed for the continuous pivot search
+const int SPEED_PIVOT_DEFAULT = 80;    // Speed for the continuous pivot search
 
 const float RIGHT_MOTOR_FACTOR = 1.0; // Adjust if one motor is consistently faster/slower
 
