@@ -40,7 +40,7 @@ bool jsumoSignalWasHighLastFrame = false; // To detect rising edge of JSumo sign
 // Initial Forward Charge State
 bool isPerformingInitialCharge = false;
 unsigned long initialChargeStartTime = 0;
-const unsigned long INITIAL_CHARGE_DURATION = 1000; // 1000 ms = 1 second
+const unsigned long INITIAL_CHARGE_DURATION = 500; // 1000 ms = 1 second
 
 // --- Motor Ramping Variables ---
 int currentActualLeftSpeed = 0;
@@ -127,7 +127,7 @@ void handleJsumoSwitch() {
       previousBumpSensorState = 0;
       isRetreatingAfterBump = false;
       
-      moveForward(SPEED_RETREAT); // Start the initial forward charge
+      moveForward(SPEED_MAX); // Start the initial forward charge
     }
   }
   jsumoSignalWasHighLastFrame = signalIsCurrentlyHigh;
