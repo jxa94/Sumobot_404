@@ -74,7 +74,11 @@ This project was built as part of a robotics course/competition. The goal was to
 
 ## 🎥 Media
 
+![Robot Image](./images/image.png)  
+![Robot Image](./images/image2.png)  
 ![Robot Image](./images/robot_top_view.jpg)  
+
+# Fusion file includes in folder
 
 ## 🧠 Challenges & Solutions
 
