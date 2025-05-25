@@ -80,11 +80,9 @@ This project was built as part of a robotics course/competition. The goal was to
 
 | Challenge                           | Solution                                      |
 |-------------------------------------|-----------------------------------------------|
-| Broken Line sensor and not enough   | Remove the line sensors since no time for re- |
-| space in the robot for Line sensors.| design.                                       |
+| Broken Line sensor and not enough space in the robot for Line sensors. | Remove the line sensors since no time for re-design. |
 |-------------------------------------|-----------------------------------------------|
-| IR sensors keep returning incorrect | Remove the IR sensors since no time for re-   |
-| Number.                             | design.                                       |
+| IR sensors keep returning an incorrect Number. | Remove the IR sensors since no time for re-design.|
 
 ## 🚀 Future Improvements
 
