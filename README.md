@@ -92,8 +92,11 @@ This project was built as part of a robotics course/competition. The goal was to
 
 ## 🙌 Credits
 
-Created by **Peter**  
-Special thanks to team members, mentors, and community forums
+- [@Omiks](https://github.com/Omiks)
+- [@ARandomNam](https://github.com/ARandomNam)
+- [@brianhan8](https://github.com/brianhan8)
+- [@jxa94](https://github.com/jxa94) 
+
 
 ---
 
